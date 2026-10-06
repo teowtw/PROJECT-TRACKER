@@ -3165,7 +3165,7 @@ function renderLastStatusWidget() {
         <div class="project-note-editor">
             <input id="projectNoteTitle" type="text" maxlength="120" placeholder="Título breve" aria-label="Título de la nota" value="${escapeHtml(noteTitle)}">
             <textarea id="projectNoteBody" placeholder="Info general, contexto, enlaces, pendientes..." aria-label="Contenido de la nota">${escapeHtml(noteBody)}</textarea>
-            <input id="projectNoteUrl" type="url" inputmode="url" placeholder="https://... (opcional)" aria-label="Enlace de la nota" value="${escapeHtml(noteUrl)}">
+            <input id="projectNoteUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://... (opcional)" aria-label="Enlace de la nota" value="${escapeHtml(noteUrl)}">
             <div class="project-note-editor-row">
                 <select id="projectNoteColor" aria-label="Color de la nota">
                     <option value="yellow" ${noteColor === 'yellow' ? 'selected' : ''}>Amarillo</option>
@@ -5249,6 +5249,7 @@ function sortDailyProjects(projects) {
                     return;
                 }
 
+                passwordInput.value = '';
                 currentUser = enteredInitials;
                 localStorage.setItem(APP_CURRENT_USER_STORAGE_KEY, currentUser);
                 persistLoginSession(currentUser);
