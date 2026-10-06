@@ -416,8 +416,21 @@ function handleIndicatorKey(event, type) {
 
 let sidebarCollapsed = {
     activos: false,
+    bau: false,
     completados: false
 };
+
+// Grupo de trabajo de un proyecto: activos (en curso), bau (lo mantenemos nosotros) o completados
+function getProjectGroup(project) {
+    const phase = project && project.phase;
+    if (phase === 'Cerrado') return 'completados';
+    if (phase === 'BAU') return 'bau';
+    return 'activos';
+}
+
+function countOpenIncidents(projectId) {
+    return (incidents || []).filter(i => i.projectId === projectId && !i.resolved).length;
+}
 
 function escapeHtml(text) {
     if (!text) return '';
@@ -470,6 +483,12 @@ function getStatusIcon(status) {
 function renderPhaseOptions(selectedPhase) {
     return PROJECT_PHASES.map(phase =>
         `<option value="${phase}" ${phase === selectedPhase ? 'selected' : ''}>${phase}</option>`
+    ).join('');
+}
+
+function renderBauOwnerOptions(selectedOwner) {
+    return BAU_OWNERS.map(owner =>
+        `<option value="${owner.value}" ${owner.value === (selectedOwner || '') ? 'selected' : ''}>${owner.label}</option>`
     ).join('');
 }
 
@@ -634,6 +653,7 @@ async function updateIndicator(event, projectId, field, value) {
         }
 
         let dailyViewMode = 'activos';
+        let dailyBauGroupCollapsed = false;
         let dashboardFilters = {
     proyecto: '',
     fases: [],
@@ -700,7 +720,7 @@ function setDashboardFilter(field, value) {
 
         function setDailyViewMode(mode) {
             dailyViewMode = mode;
-            [['btnDailyActivos', 'activos'], ['btnDailyCompletados', 'completados']].forEach(([id, value]) => {
+            [['btnDailyActivos', 'activos'], ['btnDailyBau', 'bau'], ['btnDailyCompletados', 'completados']].forEach(([id, value]) => {
                 const btn = document.getElementById(id);
                 if (!btn) return;
                 const isActive = mode === value;
@@ -981,37 +1001,29 @@ function setDashboardFilter(field, value) {
         }
 
         function renderProjectsList() {
-            const listActive = document.getElementById('projectsListActive');
-            const listCompleted = document.getElementById('projectsListCompleted');
-            
-            if (!listActive || !listCompleted) {
+            const lists = {
+                activos: document.getElementById('projectsListActive'),
+                bau: document.getElementById('projectsListBau'),
+                completados: document.getElementById('projectsListCompleted')
+            };
+
+            if (!lists.activos || !lists.completados) {
                 return; // Elementos no existen aún
             }
 
-            // Limpiar y actualizar ACTIVOS
-            listActive.innerHTML = '';
-            listActive.className = `projects-list ${sidebarCollapsed.activos ? 'collapsed' : 'expanded'}`;
-            
-            projects.forEach(project => {
-                if (project.phase !== 'Cerrado') {
-                    const li = document.createElement('li');
-                    const isActive = currentProjectId === project.id ? 'active' : '';
-                    li.innerHTML = `<button type="button" onclick="selectProject('${project.id}')" class="${isActive}"${isActive ? ' aria-current="true"' : ''}>${escapeHtml(project.name)}</button>`;
-                    listActive.appendChild(li);
-                }
+            Object.entries(lists).forEach(([group, list]) => {
+                if (!list) return;
+                list.innerHTML = '';
+                list.className = `projects-list ${sidebarCollapsed[group] ? 'collapsed' : 'expanded'}`;
             });
 
-            // Limpiar y actualizar COMPLETADOS
-            listCompleted.innerHTML = '';
-            listCompleted.className = `projects-list ${sidebarCollapsed.completados ? 'collapsed' : 'expanded'}`;
-            
             projects.forEach(project => {
-                if (project.phase === 'Cerrado') {
-                    const li = document.createElement('li');
-                    const isActive = currentProjectId === project.id ? 'active' : '';
-                    li.innerHTML = `<button type="button" onclick="selectProject('${project.id}')" class="${isActive}"${isActive ? ' aria-current="true"' : ''}>${escapeHtml(project.name)}</button>`;
-                    listCompleted.appendChild(li);
-                }
+                const list = lists[getProjectGroup(project)];
+                if (!list) return;
+                const li = document.createElement('li');
+                const isActive = currentProjectId === project.id ? 'active' : '';
+                li.innerHTML = `<button type="button" onclick="selectProject('${project.id}')" class="${isActive}"${isActive ? ' aria-current="true"' : ''}>${escapeHtml(project.name)}</button>`;
+                list.appendChild(li);
             });
 
             const select = document.getElementById('commentProjectSelect');
@@ -1033,7 +1045,8 @@ function setDashboardFilter(field, value) {
 
         function toggleSidebarSection(section) {
             sidebarCollapsed[section] = !sidebarCollapsed[section];
-            const title = document.getElementById(section === 'activos' ? 'sidebarTitleActivos' : 'sidebarTitleCompletados');
+            const titleIds = { activos: 'sidebarTitleActivos', bau: 'sidebarTitleBau', completados: 'sidebarTitleCompletados' };
+            const title = document.getElementById(titleIds[section]);
             if (title) {
                 title.setAttribute('aria-expanded', String(!sidebarCollapsed[section]));
                 const icon = title.querySelector('.section-toggle-icon');
@@ -1050,7 +1063,7 @@ function setDashboardFilter(field, value) {
             if (currentView === 'daily') {
                 // En Daily, mostrar el modo acorde al proyecto y resaltar su fila
                 const selectedProject = projects.find(p => p.id === projectId);
-                setDailyViewMode(selectedProject && selectedProject.phase === 'Cerrado' ? 'completados' : 'activos');
+                setDailyViewMode(getProjectGroup(selectedProject));
             } else {
                 // Desde cualquier otra vista, abrir la ficha del proyecto
                 switchView('ficha');
@@ -1346,37 +1359,56 @@ function setDashboardFilter(field, value) {
             ).filter(x => x);
 
             // Aplicar filtros
-            let filteredProjects = projects.filter(p =>
-                dailyViewMode === 'activos'
-                    ? p.phase !== 'Cerrado'
-                    : p.phase === 'Cerrado'
-            );
+            const applyDailyFilters = (list) => {
+                let result = list;
 
-            if (dailyFilters.proyecto && dailyFilters.proyecto.trim()) {
-                const txt = dailyFilters.proyecto.trim().toLowerCase();
-                filteredProjects = filteredProjects.filter(p =>
-                    (p.name || '').toLowerCase().includes(txt)
-                );
-            }
+                if (dailyFilters.proyecto && dailyFilters.proyecto.trim()) {
+                    const txt = dailyFilters.proyecto.trim().toLowerCase();
+                    result = result.filter(p =>
+                        (p.name || '').toLowerCase().includes(txt)
+                    );
+                }
 
-            if (dailyFilters.estados && dailyFilters.estados.length > 0) {
-                filteredProjects = filteredProjects.filter(
-                    p => dailyFilters.estados.includes(p.phase || 'Sin fase')
-                );
-            }
+                if (dailyFilters.estados && dailyFilters.estados.length > 0) {
+                    result = result.filter(
+                        p => dailyFilters.estados.includes(p.phase || 'Sin fase')
+                    );
+                }
 
-            if (dailyFilters.fechaInicio) {
-  filteredProjects = filteredProjects.filter(p => 
-    p.startDate && p.startDate.slice(0, 10) >= dailyFilters.fechaInicio
-  );
-}
+                if (dailyFilters.fechaInicio) {
+                    result = result.filter(p =>
+                        p.startDate && p.startDate.slice(0, 10) >= dailyFilters.fechaInicio
+                    );
+                }
 
-            // Filtrar por responsables si hay seleccionados
-            if (dailyFilters.responsibles && dailyFilters.responsibles.length > 0) {
-                filteredProjects = filteredProjects.filter(p => {
-                    const projectResponsibles = p.responsibles || [];
-                    return dailyFilters.responsibles.some(resp => projectResponsibles.includes(resp));
-                });
+                // Filtrar por responsables si hay seleccionados
+                if (dailyFilters.responsibles && dailyFilters.responsibles.length > 0) {
+                    result = result.filter(p => {
+                        const projectResponsibles = p.responsibles || [];
+                        return dailyFilters.responsibles.some(resp => projectResponsibles.includes(resp));
+                    });
+                }
+
+                return result;
+            };
+
+            const filteredProjects = applyDailyFilters(projects.filter(p => getProjectGroup(p) === dailyViewMode));
+
+            // En Activos, los BAU solo aparecen si tienen incidencias abiertas o comentarios esta semana
+            const bauProjects = projects.filter(p => getProjectGroup(p) === 'bau');
+            const bauHasActivity = (p) =>
+                countOpenIncidents(p.id) > 0 ||
+                weekDates.some(date => getVisibleCommentsByProjectDate(p.id, formatDateKey(date)).length > 0);
+            const bauActivityProjects = dailyViewMode === 'activos'
+                ? applyDailyFilters(bauProjects.filter(bauHasActivity))
+                : [];
+
+            const bauTabButton = document.getElementById('btnDailyBau');
+            if (bauTabButton) {
+                const bauWithIncidents = bauProjects.filter(p => countOpenIncidents(p.id) > 0).length;
+                bauTabButton.innerHTML = bauWithIncidents
+                    ? `BAU <span class="daily-mode-badge" title="${bauWithIncidents} con incidencias abiertas">⚠ ${bauWithIncidents}</span>`
+                    : 'BAU';
             }
 
 
@@ -1421,7 +1453,8 @@ function setDashboardFilter(field, value) {
 
             let html = '<table class="daily-table"><thead>';
 
-            const tituloTabla = dailyViewMode === 'activos' ? 'Proyecto (activos)' : 'Proyecto (completados)';
+            const modeLabels = { activos: 'activos', bau: 'en BAU', completados: 'completados' };
+            const tituloTabla = { activos: 'Proyecto (activos)', bau: 'Proyecto (BAU)', completados: 'Proyecto (completados)' }[dailyViewMode];
             html += '<tr>' +
                 renderSortableHeader('name', tituloTabla, dailySort, 'toggleDailySort') +
                 renderSortableHeader('status', 'Estado', dailySort, 'toggleDailySort') +
@@ -1507,24 +1540,14 @@ function setDashboardFilter(field, value) {
             html += `</tr>`;
             html += `</thead><tbody>`;
 
-            // <--- CAMBIO 2: MANEJO DE SIN RESULTADOS DENTRO DEL BODY
-            if (!filteredProjects.length) {
-                // Calculamos colspan: 3 columnas fijas + 5 días de la semana = 8
-                const label = dailyViewMode === 'activos' ? 'activos' : 'completados';
-                html += `<tr>
-                        <td colspan="8" class="table-empty">
-                            No hay proyectos ${label} que cumplan los filtros seleccionados.
-                        </td>
-                     </tr>`;
-            } else {
-                // Aplicar ordenamiento
-                const sortedProjects = sortDailyProjects(filteredProjects);
-                
-                // Renderizado normal de filas si hay resultados
-                sortedProjects.forEach(project => {
+            const appendProjectRow = (project) => {
                     const selectedClass = project.id === currentProjectId ? 'selected-row' : '';
+                    const openIncidents = getProjectGroup(project) === 'bau' ? countOpenIncidents(project.id) : 0;
+                    const incidentBadge = openIncidents
+                        ? ` <span class="bau-incident-badge" title="${openIncidents} incidencia(s) abierta(s)">⚠ ${openIncidents}</span>`
+                        : '';
                     html += `<tr class="${selectedClass}" onclick="onRowClick('${project.id}')">
-                    <td class="project-name-cell"><button type="button" class="project-name-link" title="Abrir ficha del proyecto" onclick="onProjectNameClick(event, '${project.id}')">${escapeHtml(project.name)}</button></td>
+                    <td class="project-name-cell"><button type="button" class="project-name-link" title="Abrir ficha del proyecto" onclick="onProjectNameClick(event, '${project.id}')">${escapeHtml(project.name)}</button>${incidentBadge}</td>
                     <td>
                         <select class="state-select" aria-label="Fase de ${escapeHtml(project.name)}"
                                 onclick="event.stopPropagation()"
@@ -1583,7 +1606,30 @@ function setDashboardFilter(field, value) {
                     });
 
                     html += '</tr>';
-                });
+            };
+
+            // Colspan: 3 columnas fijas + 5 días de la semana = 8
+            if (!filteredProjects.length) {
+                html += `<tr>
+                        <td colspan="8" class="table-empty">
+                            No hay proyectos ${modeLabels[dailyViewMode]} que cumplan los filtros seleccionados.
+                        </td>
+                     </tr>`;
+            } else {
+                sortDailyProjects(filteredProjects).forEach(appendProjectRow);
+            }
+
+            if (bauActivityProjects.length) {
+                html += `<tr class="daily-group-row">
+                        <td colspan="8">
+                            <button type="button" class="daily-group-toggle" aria-expanded="${!dailyBauGroupCollapsed}" onclick="toggleDailyBauGroup()">
+                                <span class="section-toggle-icon" data-collapsed="${dailyBauGroupCollapsed}" aria-hidden="true"></span>BAU con actividad (${bauActivityProjects.length})
+                            </button>
+                        </td>
+                     </tr>`;
+                if (!dailyBauGroupCollapsed) {
+                    sortDailyProjects(bauActivityProjects).forEach(appendProjectRow);
+                }
             }
 
             html += '</tbody></table>';
@@ -1701,7 +1747,12 @@ function setDashboardFilter(field, value) {
             event.stopPropagation();
             const newPhase = event.target.value;
             await updateProjectField(projectId, 'phase', newPhase);
-            setDailyViewMode(newPhase === 'Cerrado' ? 'completados' : 'activos');
+            setDailyViewMode(getProjectGroup({ phase: newPhase }));
+        }
+
+        function toggleDailyBauGroup() {
+            dailyBauGroupCollapsed = !dailyBauGroupCollapsed;
+            renderDaily();
         }
 
 
@@ -2349,6 +2400,10 @@ function setDashboardFilter(field, value) {
                     update.phase = value;
                     project.phase = value;
                     renderProjectsList();
+                    break;
+                case 'bauOwner':
+                    update.bau_owner = value || null;
+                    project.bauOwner = value || '';
                     break;
 
                 case 'volume':
@@ -3471,6 +3526,16 @@ function renderLastStatusWidget() {
             </div>
         </div>
     </div>
+    <div class="ficha-row">
+        <div class="ficha-field">
+            <div class="ficha-label">Responsable BAU</div>
+            <div class="ficha-value">
+                <select aria-label="Responsable BAU" title="Quién mantiene la solución cuando termina el proyecto" onchange="updateProjectField('${project.id}','bauOwner', this.value)">
+                    ${renderBauOwnerOptions(project.bauOwner)}
+                </select>
+            </div>
+        </div>
+    </div>
 </div>`;
 
             // Secciones principales (prerrequisitos + comentarios) en una rejilla propia,
@@ -3814,7 +3879,11 @@ function renderDashboard() {
             </div>
             <div class="stat-card">
                 <div class="stat-label">Activos</div>
-                <div class="stat-value">${filteredProjects.filter(p => p.phase !== 'Cerrado').length}</div>
+                <div class="stat-value">${filteredProjects.filter(p => getProjectGroup(p) === 'activos').length}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">BAU</div>
+                <div class="stat-value">${filteredProjects.filter(p => getProjectGroup(p) === 'bau').length}</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Completados</div>
@@ -4318,7 +4387,9 @@ function sortDailyProjects(projects) {
                 startDate: p.start_date || null,
                 endDate: p.end_date || null,
                 benefits: p.benefits || "",
-                phase: p.phase || "Idea",
+                // "Mantenimiento" es el nombre antiguo de la fase BAU
+                phase: p.phase === 'Mantenimiento' ? 'BAU' : (p.phase || "Idea"),
+                bauOwner: p.bau_owner || '',
                 stakeholders: p.stakeholders || "",
                 volume: p.volume || "",
                 prerequisites: p.prerequisites || [],
@@ -4384,8 +4455,9 @@ function sortDailyProjects(projects) {
 
             renderProjectsList();
             if (projects.length > 0 && !currentProjectId) {
-                // Seleccionar el primer proyecto ACTIVO (no cerrado)
-                const activeProject = projects.find(p => p.phase !== 'Cerrado');
+                // Seleccionar el primer proyecto ACTIVO (en curso; si no hay, en BAU)
+                const activeProject = projects.find(p => getProjectGroup(p) === 'activos')
+                    || projects.find(p => getProjectGroup(p) === 'bau');
                 currentProjectId = activeProject ? activeProject.id : projects[0].id;
             }
             updateWeekInfo();

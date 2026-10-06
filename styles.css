@@ -676,6 +676,44 @@ button:disabled {
     box-shadow: 0 2px 8px rgba(23, 0, 60, 0.12);
 }
 
+.daily-mode-badge,
+.bau-incident-badge {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    background: #fff4e0;
+    color: var(--color-warning-text);
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.daily-group-row td {
+    padding: 8px 10px !important;
+    background: var(--color-primary-soft);
+    border-top: 2px solid var(--color-border);
+}
+
+.daily-group-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-primary);
+}
+
+.daily-group-toggle .section-toggle-icon::before {
+    border-top-color: var(--color-primary);
+}
+
 .daily-legend {
     display: flex;
     flex-wrap: wrap;
@@ -4174,7 +4212,7 @@ button:disabled {
     }
 
     .dashboard-stats {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
     }
 

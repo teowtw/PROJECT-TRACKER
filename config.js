@@ -18,4 +18,13 @@ const STANDARD_PREREQUISITES = [
 ];
 
 // Fases del ciclo de vida de un proyecto. El orden define el orden en tablas y selectores.
-const PROJECT_PHASES = ['Idea', 'En Progreso', 'On Hold', 'Mantenimiento', 'Hypercare', 'Cerrado'];
+// BAU = el proyecto ha terminado y el mantenimiento lo llevamos nosotros.
+// Si el BAU lo lleva otro equipo, el proyecto pasa de Hypercare a Cerrado.
+const PROJECT_PHASES = ['Idea', 'En Progreso', 'On Hold', 'Hypercare', 'BAU', 'Cerrado'];
+
+// Quién lleva el BAU una vez terminado el proyecto
+const BAU_OWNERS = [
+    { value: '', label: 'Sin definir' },
+    { value: 'propio', label: 'Nuestro equipo' },
+    { value: 'otro', label: 'Otro equipo' }
+];

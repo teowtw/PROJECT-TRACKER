@@ -41,6 +41,11 @@
                 </button>
                 <ul class="sidebar-list projects-list expanded" id="projectsListActive"></ul>
 
+                <button type="button" class="sidebar-title" id="sidebarTitleBau" aria-expanded="true" aria-controls="projectsListBau" onclick="toggleSidebarSection('bau')">
+                    <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>BAU
+                </button>
+                <ul class="sidebar-list projects-list expanded" id="projectsListBau"></ul>
+
                 <button type="button" class="sidebar-title" id="sidebarTitleCompletados" aria-expanded="true" aria-controls="projectsListCompleted" onclick="toggleSidebarSection('completados')">
                     <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>Completados
                 </button>
@@ -87,6 +92,7 @@
                         <div class="daily-mode-toggle">
                             <button type="button" id="btnDailyActivos" class="active" aria-pressed="true"
                                 onclick="setDailyViewMode('activos')">Activos</button>
+                            <button type="button" id="btnDailyBau" aria-pressed="false" onclick="setDailyViewMode('bau')">BAU</button>
                             <button type="button" id="btnDailyCompletados" aria-pressed="false" onclick="setDailyViewMode('completados')">Completados</button>
                         </div>
                         <ul class="daily-legend" aria-label="Leyenda de celdas">
