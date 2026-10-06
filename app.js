@@ -2386,7 +2386,7 @@ function setDashboardFilter(field, value) {
                 case 'name':
                     update.name = value;
                     project.name = value;
-                    renderSidebar();
+                    renderProjectsList();
                     break;
                 case 'startDate':
                     update.start_date = value || null;
