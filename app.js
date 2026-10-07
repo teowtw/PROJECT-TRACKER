@@ -1,4 +1,40 @@
-﻿// Permite añadir o editar la URL de un prerrequisito desde la ficha
+﻿// ===== Tema claro/oscuro (Paper & Ink) =====
+const APP_THEME_STORAGE_KEY = 'pt_theme';
+
+function getStoredTheme() {
+    try {
+        return localStorage.getItem(APP_THEME_STORAGE_KEY);
+    } catch {
+        return null;
+    }
+}
+
+function applyTheme(theme) {
+    const resolved = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', resolved);
+    const toggle = document.getElementById('themeToggleBtn');
+    if (toggle) {
+        toggle.textContent = resolved === 'dark' ? '☀️ Light mode' : '🌙 Dark mode';
+        toggle.setAttribute('aria-pressed', resolved === 'dark' ? 'true' : 'false');
+    }
+}
+
+function initTheme() {
+    applyTheme(getStoredTheme() || 'light');
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    try {
+        localStorage.setItem(APP_THEME_STORAGE_KEY, next);
+    } catch {
+        // Ignorar fallos de storage local.
+    }
+    applyTheme(next);
+}
+
+// Permite añadir o editar la URL de un prerrequisito desde la ficha
 function normalizeDocumentationUrl(rawUrl) {
     const value = (rawUrl || '').trim();
     if (!value) return '';
@@ -575,6 +611,9 @@ async function updateIndicator(event, projectId, field, value) {
         let selectedVacationDays = []; // Rastrear días seleccionados para vacaciones
         let pendingVacationSelection = null;
         let vacationBalanceYear = new Date().getFullYear();
+        let vacationLegendFilter = null; // null | 'current_year' | 'previous_year' | 'willis_choice'
+        // Días anuales de referencia usados solo para la barra de balance visual del resumen de vacaciones.
+        const STANDARD_VACATION_DAYS_PER_YEAR = 22;
         let currentMonth = new Date();
         let sidebarAutoCollapsed = false; // Indica si el sidebar fue colapsado automáticamente por la vista Equipo
         let calendarZoom = 0; // 0=compact(8px) 1=medium(16px) 2=detail(28px)
@@ -3722,6 +3761,144 @@ document.getElementById('fichaView').innerHTML = html + rightSidebarHtml;
 
         }
 
+// Horas mensuales equivalentes a 1 FTE, usadas solo para presentar
+// "horas ahorradas" en el histograma del dashboard a partir del campo fte.
+const FTE_MONTHLY_HOURS = 160;
+
+const PHASE_CHART_COLORS = {
+    'Idea': 'phase-color-idea',
+    'En Progreso': 'phase-color-progreso',
+    'On Hold': 'phase-color-hold',
+    'Hypercare': 'phase-color-hypercare',
+    'BAU': 'phase-color-bau',
+    'Cerrado': 'phase-color-cerrado'
+};
+
+function buildPhaseDonutHtml(projectsForChart) {
+    const order = (typeof PROJECT_PHASES !== 'undefined' && PROJECT_PHASES.length) ? PROJECT_PHASES : Object.keys(PHASE_CHART_COLORS);
+    const counts = order.map(phase => ({
+        phase,
+        count: projectsForChart.filter(p => (p.phase || 'Idea') === phase).length
+    })).filter(entry => entry.count > 0);
+
+    const total = counts.reduce((sum, e) => sum + e.count, 0);
+    if (!total) {
+        return `<div class="chart-card"><h3 class="chart-title">📋 Proyectos por Fase</h3><div class="chart-empty">Sin datos para mostrar.</div></div>`;
+    }
+
+    const radius = 54;
+    const circumference = 2 * Math.PI * radius;
+    let offsetAccum = 0;
+
+    const segments = counts.map(entry => {
+        const fraction = entry.count / total;
+        const dash = fraction * circumference;
+        const seg = `<circle class="donut-segment ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-idea'}" cx="70" cy="70" r="${radius}"
+            fill="none" stroke-width="20"
+            stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}"
+            stroke-dashoffset="${(-offsetAccum).toFixed(2)}"
+            transform="rotate(-90 70 70)">
+            <title>${escapeHtml(entry.phase)}: ${entry.count} (${Math.round(fraction * 100)}%)</title>
+        </circle>`;
+        offsetAccum += dash;
+        return seg;
+    }).join('');
+
+    const legend = counts.map(entry => `
+        <li class="donut-legend-item" tabindex="0" role="button"
+            onclick="toggleDashFilter('fases','${entry.phase}')"
+            onkeydown="activateOnEnterOrSpace(event)"
+            title="Filtrar por ${escapeHtml(entry.phase)}">
+            <span class="donut-legend-swatch ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-idea'}"></span>
+            <span class="donut-legend-label">${escapeHtml(entry.phase)}</span>
+            <span class="donut-legend-value u-figure">${entry.count}</span>
+        </li>`).join('');
+
+    return `
+    <div class="chart-card">
+        <h3 class="chart-title">📋 Proyectos por Fase</h3>
+        <div class="donut-chart-body">
+            <svg viewBox="0 0 140 140" class="donut-svg" role="img" aria-label="Distribución de proyectos por fase">
+                ${segments}
+                <text x="70" y="65" text-anchor="middle" class="donut-center-value u-figure">${total}</text>
+                <text x="70" y="82" text-anchor="middle" class="donut-center-label u-kicker">Proyectos</text>
+            </svg>
+            <ul class="donut-legend">${legend}</ul>
+        </div>
+    </div>`;
+}
+
+function buildSavingsHistogramHtml(projectsForChart) {
+    const confirmed = projectsForChart.filter(p => (p.phase === 'BAU' || p.phase === 'Cerrado') && Number(p.fte) > 0);
+
+    if (!confirmed.length) {
+        return `<div class="chart-card"><h3 class="chart-title">⏱️ Horas Ahorradas (BAU/Cerrado)</h3><div class="chart-empty">Aún no hay proyectos en BAU o Cerrado con ahorro en FTE.</div></div>`;
+    }
+
+    const buckets = {};
+    confirmed.forEach(p => {
+        const dateStr = p.endDate || p.createdAt;
+        const monthKey = dateStr ? String(dateStr).slice(0, 7) : 'Sin fecha';
+        const hours = Number(p.fte) * FTE_MONTHLY_HOURS;
+        buckets[monthKey] = (buckets[monthKey] || 0) + hours;
+    });
+
+    const monthKeys = Object.keys(buckets).sort();
+    const maxValue = Math.max(...monthKeys.map(k => buckets[k]));
+    let cumulative = 0;
+    const cumulativeValues = monthKeys.map(k => (cumulative += buckets[k]));
+    const maxCumulative = Math.max(...cumulativeValues, 1);
+
+    const chartWidth = 480;
+    const chartHeight = 160;
+    const padding = 28;
+    const innerWidth = chartWidth - padding * 2;
+    const innerHeight = chartHeight - padding * 2;
+    const barSlot = innerWidth / monthKeys.length;
+    const barWidth = Math.min(36, barSlot * 0.55);
+
+    const bars = monthKeys.map((key, i) => {
+        const value = buckets[key];
+        const barHeight = maxValue > 0 ? (value / maxValue) * innerHeight : 0;
+        const x = padding + i * barSlot + (barSlot - barWidth) / 2;
+        const y = padding + innerHeight - barHeight;
+        const label = formatMonthLabelShort(key);
+        return `
+            <rect class="histogram-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(barHeight, 1).toFixed(1)}" rx="3">
+                <title>${label}: ${Math.round(value).toLocaleString('es-ES')} h</title>
+            </rect>
+            <text x="${(x + barWidth / 2).toFixed(1)}" y="${chartHeight - 6}" text-anchor="middle" class="histogram-axis-label">${label}</text>`;
+    }).join('');
+
+    const linePoints = monthKeys.map((key, i) => {
+        const x = padding + i * barSlot + barSlot / 2;
+        const y = padding + innerHeight - (cumulativeValues[i] / maxCumulative) * innerHeight;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+
+    const totalHours = Math.round(cumulative);
+
+    return `
+    <div class="chart-card">
+        <h3 class="chart-title">⏱️ Horas Ahorradas (BAU/Cerrado)</h3>
+        <div class="histogram-total u-figure">${totalHours.toLocaleString('es-ES')} h <span class="histogram-total-label u-kicker">acumuladas</span></div>
+        <svg viewBox="0 0 ${chartWidth} ${chartHeight}" class="histogram-svg" role="img" aria-label="Histograma de horas ahorradas por mes">
+            <line x1="${padding}" y1="${padding + innerHeight}" x2="${chartWidth - padding}" y2="${padding + innerHeight}" class="histogram-axis-line" />
+            ${bars}
+            <polyline points="${linePoints}" class="histogram-trend-line" fill="none" />
+        </svg>
+        <p class="chart-footnote">Estimado a ${FTE_MONTHLY_HOURS}h/mes por FTE ahorrado. Línea = acumulado.</p>
+    </div>`;
+}
+
+function formatMonthLabelShort(monthKey) {
+    if (!monthKey || monthKey === 'Sin fecha') return 'S/F';
+    const [year, month] = monthKey.split('-');
+    const names = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const idx = parseInt(month, 10) - 1;
+    return `${names[idx] || month}'${(year || '').slice(2)}`;
+}
+
 function renderDashboard() {
     const container = document.getElementById('dashboardView');
     
@@ -3890,6 +4067,11 @@ function renderDashboard() {
                 <div class="stat-label">Completados</div>
                 <div class="stat-value">${filteredProjects.filter(p => p.phase === 'Cerrado').length}</div>
             </div>
+        </div>
+
+        <div class="dashboard-charts">
+            ${buildPhaseDonutHtml(filteredProjects)}
+            ${buildSavingsHistogramHtml(filteredProjects)}
         </div>
 
         <div class="dashboard-table-container">
@@ -4567,9 +4749,9 @@ function sortDailyProjects(projects) {
     <div class="calendar-help">
         <p class="calendar-hint">Haz clic en un día de tu fila para marcar vacaciones. Con Ctrl+Clic seleccionas varios días y luego pulsas «Añadir vacaciones». Clic sobre un día ya marcado para eliminarlo.</p>
         <ul class="calendar-legend" aria-label="Leyenda del calendario">
-            <li><span class="legend-swatch legend-swatch--current"></span>Año actual</li>
-            <li><span class="legend-swatch legend-swatch--previous"></span>Año anterior</li>
-            <li><span class="legend-swatch legend-swatch--willis"></span>Willis Choice</li>
+            <li class="legend-filterable${vacationLegendFilter === 'current_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('current_year')" onkeydown="activateOnEnterOrSpace(event)" title="Resaltar solo Año actual"><span class="legend-swatch legend-swatch--current"></span>Año actual</li>
+            <li class="legend-filterable${vacationLegendFilter === 'previous_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('previous_year')" onkeydown="activateOnEnterOrSpace(event)" title="Resaltar solo Año anterior"><span class="legend-swatch legend-swatch--previous"></span>Año anterior</li>
+            <li class="legend-filterable${vacationLegendFilter === 'willis_choice' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('willis_choice')" onkeydown="activateOnEnterOrSpace(event)" title="Resaltar solo Willis Choice"><span class="legend-swatch legend-swatch--willis"></span>Willis Choice</li>
             <li><span class="legend-swatch legend-swatch--selected"></span>Seleccionado</li>
             <li><span class="legend-swatch legend-swatch--holiday"></span>Festivo</li>
             <li><span class="legend-swatch legend-swatch--weekend"></span>Fin de semana</li>
@@ -4671,6 +4853,10 @@ function sortDailyProjects(projects) {
                                 if (vacation.vacation_type === 'current_year') cellClass += ' vacation-current-year';
                                 else if (vacation.vacation_type === 'previous_year') cellClass += ' vacation-previous-year';
                                 else if (vacation.vacation_type === 'willis_choice') cellClass += ' vacation-willis-choice';
+
+                                if (vacationLegendFilter && vacation.vacation_type !== vacationLegendFilter) {
+                                    cellClass += ' legend-dim';
+                                }
                             }
 
                             const tooltip = `${member} · ${date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })}${vacation ? ' · Vacaciones' : ''}`;
@@ -4738,28 +4924,63 @@ function sortDailyProjects(projects) {
                     </select>
                 </label>
             </div>
-            <table class="summary-table">
-                <thead>
-                    <tr>
-                        <th>Usuario</th>
-                        <th>Vacaciones imputadas</th>
-                        <th>Willis Choice</th>
-                        <th class="total-column">Total usado</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${summary.map(s => `
-                        <tr>
-                            <td class="member-name">${s.member}</td>
-                            <td class="vacation-current">${s.vacationDays.toFixed(1)}</td>
-                            <td class="vacation-willis">${s.willisChoiceDays.toFixed(1)}</td>
-                            <td class="total-column"><strong>${s.total.toFixed(1)}</strong></td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
+
+            <div class="vacation-balance-list">
+                ${summary.map(s => {
+                    const pct = Math.min(100, Math.round((s.vacationDays / STANDARD_VACATION_DAYS_PER_YEAR) * 100));
+                    const barColor = s.vacationDays > STANDARD_VACATION_DAYS_PER_YEAR ? 'balance-negative'
+                        : pct >= 80 ? 'balance-attention' : 'balance-positive';
+                    return `
+                    <div class="vacation-balance-row">
+                        <div class="vacation-balance-name">${s.member}</div>
+                        <div class="vacation-balance-track" role="progressbar" aria-valuenow="${s.vacationDays}" aria-valuemin="0" aria-valuemax="${STANDARD_VACATION_DAYS_PER_YEAR}">
+                            <div class="vacation-balance-fill ${barColor}" style="width:${pct}%"></div>
+                        </div>
+                        <div class="vacation-balance-figure u-figure">${s.vacationDays.toFixed(1)}<span class="vacation-balance-max">/${STANDARD_VACATION_DAYS_PER_YEAR}</span></div>
+                        ${s.willisChoiceDays ? `<div class="vacation-balance-willis">+${s.willisChoiceDays.toFixed(1)} Willis</div>` : ''}
+                    </div>`;
+                }).join('')}
+            </div>
+            <p class="chart-footnote">Barra de balance sobre ${STANDARD_VACATION_DAYS_PER_YEAR} días/año de referencia (ajustable). Willis Choice se muestra aparte, sin límite fijo.</p>
+
+            ${buildVacationMonthDistributionHtml(vacationBalanceYear)}
         </div>
     `;
+        }
+
+        function buildVacationMonthDistributionHtml(year) {
+            const monthTotals = new Array(12).fill(0);
+            teamVacations.forEach(v => {
+                if (!v.start_date || !v.end_date) return;
+                const start = new Date(v.start_date);
+                const end = new Date(v.end_date);
+                if (isNaN(start) || isNaN(end)) return;
+                const cursor = new Date(start);
+                while (cursor <= end) {
+                    if (cursor.getFullYear() === year) {
+                        monthTotals[cursor.getMonth()] += 1;
+                    }
+                    cursor.setDate(cursor.getDate() + 1);
+                }
+            });
+
+            const maxTotal = Math.max(...monthTotals, 1);
+            const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+            const bars = monthTotals.map((total, i) => {
+                const heightPct = Math.max(Math.round((total / maxTotal) * 100), total > 0 ? 6 : 0);
+                return `
+                <div class="vacation-month-bar-wrap" title="${monthNames[i]} ${year}: ${total} día(s)-persona">
+                    <div class="vacation-month-bar" style="height:${heightPct}%"></div>
+                    <span class="vacation-month-bar-label">${monthNames[i]}</span>
+                </div>`;
+            }).join('');
+
+            return `
+            <div class="vacation-month-distribution">
+                <h4 class="chart-title">📊 Concentración de ausencias por mes (${year})</h4>
+                <div class="vacation-month-bar-chart">${bars}</div>
+            </div>`;
         }
 
         function getVacationAccrualYear(vacation) {
@@ -4768,6 +4989,11 @@ function sortDailyProjects(projects) {
 
             const dateYear = Number(String(vacation.start_date || '').slice(0, 4));
             return vacation.vacation_type === 'previous_year' ? dateYear - 1 : dateYear;
+        }
+
+        function toggleVacationLegendFilter(type) {
+            vacationLegendFilter = vacationLegendFilter === type ? null : type;
+            renderTeamView();
         }
 
         function setVacationBalanceYear(year) {
@@ -5373,6 +5599,7 @@ function sortDailyProjects(projects) {
 
 
         window.addEventListener('load', setupLoginScreen);
+        window.addEventListener('load', initTheme);
         window.addEventListener('keydown', event => {
             if (event.key !== 'Escape') return;
             if (closeTopModal()) return;

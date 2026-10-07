@@ -1,0 +1,338 @@
+# IDENTIDAD VISUAL Y SISTEMA DE DISEÑO — TRACE-IT
+> **Proyecto:** Trace-It (Maisa Hackathon Spain) **URL Demo:** 
+> [https://gex-dashboard.hopto.org/nexia/trace-it/](https://gex-dashboar
+> d.hopto.org/nexia/trace-it/)
+> **Repositorio:** `trace-it` (Local)
+> **Estado:** Documentación canónica de diseño, componentes, arquitectura UX/UI y animaciones para reproducción y futuras iteraciones.
+
+---
+
+## 1. Filosofía y Concepto Visual
+
+Trace-It adopta una filosofía estética inspirada en el **diseño editorial suizo**, los **documentos notariales de alta seguridad** y los **sistemas operativos de misión crítica** (*interior.dev <http://interior.dev>  OTP docs*). 
+
+La metáfora rectora es **"Paper & Ink" (Papel y Tinta)**:
+* En modo claro, la interfaz simula el grano cálido de papel de archivo de primera calidad con tinta densa neutra (`#131313`).
+* En modo oscuro, el lienzo se invierte manteniendo la misma calidez de papel carbón (`#141312` canvas, `#1d1d1a` panels, tinta marfil `#f8f8f4`), huyendo deliberadamente de los negros puros OLED fríos o azulados.
+* La sensación general transmite **rigor, determinismo y auditoría forense**: cada elemento gráfico tiene una justificación funcional estricta, bordes submilimétricos translúcidos y sombras físicas suaves.
+
+---
+
+## 2. Paleta de Colores y Tokens de Diseño
+
+La paleta se define mediante CSS Custom Properties sobre una arquitectura semántica dual (Modo Claro por defecto y Modo Oscuro vía `html[data-theme="dark"]`).
+
+### 2.1 Superficies y Lienzo (Surfaces & Canvas)
+
+| Token | Modo Claro (Hex / Val) | Modo Oscuro (Hex / Val) | Uso y Rol 
+| Visual |
+| :--- | :--- | :--- | :--- |
+| `--color-canvas` | `#f4f4f2` | `#141312` | Fondo envolvente global de 
+| la ventana y viewport | `--color-shell` | `#ffffff` | `#1d1d1a` | 
+| Contenedor flotante de la aplicación principal (`rounded-[20px]`) | 
+| `--color-sidebar` | `#f4f4f2` | `#141312` | Fondo de la barra lateral 
+| de navegación | `--color-surface` | `#ffffff` | `#1d1d1a` | Tarjetas 
+| interiores, paneles de inspección, menús y modales | `--color-paper` | 
+| `#fffcf6` | `#1a1a17` | Visores de documentos, áreas de lectura y 
+| extractos de texto | `--color-well` | `#ecece8` | `#252522` | Huecos 
+| de contraste, fondos de previsualización, estados inactivos |
+
+### 2.2 Bordes, Separadores y Resaltes (Hairlines & Rules)
+
+| Token | Modo Claro (Hex / Val) | Modo Oscuro (Hex / Val) | Propósito |
+| :--- | :--- | :--- | :--- |
+| `--color-hairline`| `#ebebe9` | `#ffffff29` (16% blanco) | Separadores 
+| de bloque estructural y barras fijas | `--color-line` | `#0000000f` 
+| (6% negro) | `#ffffff29` (16% blanco) | Anillos perimetrales 
+| (`ring-1`) en tarjetas y shells | `--color-rule` | `#0000000d` (5% 
+| negro) | `#ffffff14` (8% blanco) | Divisiones finas en listas y tablas 
+| | `--color-mark` | `#ece6c4` | `#3d3a28` | Fondo de resaltado 
+| semántico (`<mark>`) en textos | `--color-focus` | `#4568ff` | 
+| `#93b0ff` | Anillo de accesibilidad `:focus-visible` (offset 2px) | 
+| `--color-scrim` | `#13131333` (20% opaco)| `#00000080` (50% opaco) | 
+| Backdrop desenfocado en modales y drawers móviles |
+
+### 2.3 Tintas y Jerarquía de Texto (Typography Colors)
+
+| Token | Modo Claro | Modo Oscuro | Jerarquía de Uso |
+| :--- | :--- | :--- | :--- |
+| `--color-ink` | `#131313` | `#f8f8f4` | Texto primario, titulares, 
+| datos clave, iconos activos | `--color-on-ink` | `#ffffff` | `#141312` 
+| | Texto en botones de acción principal (alto contraste) | 
+| `--color-muted` | `#73726c` | `#c2c2ba` | Texto secundario, 
+| descripciones, metadatos, iconos neutros | `--color-faint` | `#a3a29c` 
+| | `#93938b` | Texto terciario, kickers, timestamps, placeholders, 
+| puntuación |
+
+### 2.4 Semántica de Decisiones Operativas (Outcome Tokens)
+
+Los estados de decisión siguen una lógica estricta de color con dos niveles: color sólido (texto e iconos) y tono `soft` (fondos de píldoras y tarjetas).
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ DECISIÓN POSITIVA: PAGAR / APROBAR / OK / ACTIVE                      │
+│ Light: #1f7a45 (Sólido)  |  #eef6f0 (Fondo Suave)                     │
+│ Dark:  #5bd79c (Sólido)  |  rgba(91, 215, 156, 0.12) (#5bd79c1f)       │
+├────────────────────────────────────────────────────────────────────────┤
+│ DECISIÓN ATENCIÓN: ESCALAR / REVISAR / DEGRADED / BLOCKED             │
+│ Light: #b4561f (Sólido)  |  #f8efe8 (Fondo Suave)                     │
+│ Dark:  #e8a06a (Sólido)  |  rgba(232, 160, 106, 0.12) (#e8a06a1f)      │
+├────────────────────────────────────────────────────────────────────────┤
+│ DECISIÓN NEGATIVA: NO PAGAR / RECHAZAR / ERROR / DOWN                 │
+│ Light: #b42318 (Sólido)  |  #f7eceb (Fondo Suave)                     │
+│ Dark:  #f5897f (Sólido)  |  rgba(245, 137, 127, 0.12) (#f5897f1f)      │
+├────────────────────────────────────────────────────────────────────────┤
+│ ESTADO NEUTRAL / PENDIENTE: OCR / COMPILANDO / DRAFT / PENDING        │
+│ Light: #73726c (Sólido)  |  #f0efea (Fondo Suave)                     │
+│ Dark:  #93938b (Sólido)  |  rgba(255, 255, 255, 0.06) (#ffffff0f)      │
+├────────────────────────────────────────────────────────────────────────┤
+│ URGENCIA / VENCIMIENTO: ALERTA FINANCIERA / VENCIMIENTO PRÓXIMO        │
+│ Light: #a16207 (Sólido)  |  #eab308 (Punto Dot) | #fbf5dd (Fondo)    │
+│ Dark:  #f2cc5b (Sólido)  |  #eab308 (Punto Dot) | #f2cc5b1f (Fondo)   │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.5 Planos de Ejecución y Métricas (Planes) En gráficos de telemetría y Sankey flows:
+* **Ingestion (Extracción OCR/Documental):** `var(--color-ocr)`
+* **Agents (Lógica y LLM):** `var(--color-escalar)`
+* **Execution (Motor de Reglas Deterministas):** `var(--color-pagar)`
+
+---
+
+## 3. Tipografía y Estructura Editorial
+
+Se basa en la familia tipográfica **Geist** (diseñada por Vercel para entornos de alta densidad de información):
+* Sans-Serif: `Geist Variable`, `ui-sans-serif`, `system-ui`, `sans-serif`
+* Monospaced: `Geist Mono Variable`, `Geist Mono`, `ui-monospace`, `monospace`
+
+### 3.1 Clases Utilitarias Tipográficas
+
+```css
+/* Título de Display (Landing, Titulares Principales) */ .u-display {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1.04;
+}
+
+/* Números y Cifras Técnicas (KPIs, Importes, Moneda, Timers) */ .u-figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.05em;
+  line-height: 0.95;
+}
+
+/* Kicker (Etiqueta superior en mayúsculas estilo prensa) */ .u-kicker {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+```
+
+### 3.2 Escala Tipográfica
+
+| Nivel | Tamaño | Peso | Tracking | Line-Height | Uso |
+| :--- | :--- | :--- | :--- | :--- | :--- | **Hero Display** | `29px` - 
+| `32px` | `500` (Medium) | `-0.045em` | `1.04` - `1.1` | Título del 
+| demo y encabezados de página | **Section Title**| `23px` | `500` 
+| (Medium) | `-0.045em` | `1.15` | Encabezados en móvil o módulos | 
+| **Card Title** | `15px` | `500` (Medium) | `-0.02em` | `1.3` | Títulos 
+| de tarjetas y secciones | **Body Primary** | `14px` | `400` (Regular) 
+| | `-0.011em` | `1.45` | Texto base de la interfaz | **Body Compact** | 
+| `13px` | `400` / `500` | `-0.01em` | `1.4` | Navegación lateral, 
+| campos de texto, tablas | **Caption / Sub** | `12px` | `400` (Regular) 
+| | `0em` | `1.4` | Descripciones secundarias y pistas | **Mono Small** 
+| | `11px` | `400` / `500` | `0.02em` | `1.2` | Código, IDs, hashes, 
+| versiones | **Status Badge** | `10px` | `500` (Medium) | `0.04em` | 
+| `1.2` | Píldoras de decisión y chips de estado |
+
+### 3.3 Logotipo y Wordmark
+El identificador de marca se compone en texto puro con un acento deliberado:
+```html
+<span class="font-medium tracking-[-0.03em]">
+  trace<span class="text-faint">[.]</span>it </span> ``` Acompañado por el isotipo `TraceMark` (renderizado temático adaptado a fondo claro u oscuro en resolución 256×256 px).
+
+---
+
+## 4. Radios, Sombras y Elevación Espacial
+
+Trace-It utiliza un sistema estricto de radios decrecientes y sombras compuestas:
+
+### 4.1 Escala de Radios (Corner Radii)
+* **`--radius-shell` (`20px`):** Esquinas exteriores del marco principal de la consola (`rounded-[20px]`).
+* **`--radius-card` (`16px`):** Tarjetas anidadas, visores de trazas y contenedores internos (`rounded-[16px]`).
+* **Notice Radius (`14px`):** Banners de notificación y alertas operativas (`rounded-[14px]`).
+* **Input Radius (`10px`):** Entradas de texto, textareas y selects (`rounded-[10px]`).
+* **`--radius-pill` (`999px`):** Botones de acción, interruptores segmentados y etiquetas (`rounded-full`).
+
+### 4.2 Sistema de Sombras (Elevation)
+* **`--shadow-lift`:**
+  * *Light:* `0 1px 2px rgba(19, 19, 19, 0.059)`
+  * *Dark:* `0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.051)`
+  * *Uso:* Elementos sutilmente elevados al posar el cursor o pestañas activas en reposo.
+* **`--shadow-float`:**
+  * *Light:* `0 8px 24px rgba(19, 19, 19, 0.078)`
+  * *Dark:* `0 16px 40px rgba(0, 0, 0, 0.5)`
+  * *Uso:* Menús flotantes, chips arrastrados, paleta de comandos.
+* **`--shadow-pop`:**
+  * *Light:* `0 16px 50px rgba(19, 19, 19, 0.12)`
+  * *Dark:* `0 28px 56px -22px rgba(0, 0, 0, 0.7)`
+  * *Uso:* El marco principal del Walkthrough en la landing y modales críticos.
+* **`--shadow-shell`:**
+  * *Light:* `0 1px 2px rgba(19,19,19,0.04), 0 8px 24px rgba(19,19,19,0.04)`
+  * *Dark:* `0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.051)`
+  * *Uso:* Marco permanente de la aplicación en escritorio.
+
+---
+
+## 5. Micro-interacciones y Animaciones
+
+El sistema de movimiento de Trace-It no es ornamental; busca emular la inercia mecánica de una herramienta industrial precisa.
+
+### 5.1 Curvas de Aceleración y Tiempos
+* **Curva estándar (`--ease-out`):** `cubic-bezier(0.23, 1, 0.32, 1)` (detención rápida y suave).
+* **Curva de transición de vistas (`EASE`):** `[0.22, 1, 0.36, 1]`.
+* **Curva de cajón lateral móvil (`drawerEase`):** `[0.32, 0.72, 0, 1]`.
+
+### 5.2 Compresión Táctil en Botones (Tactile Press) Todos los botones implementan una micro-compresión elástica en `:active`:
+```css
+button {
+  transition: transform 160ms var(--ease-out), 
+              background-color 160ms var(--ease-out),
+              color 160ms var(--ease-out), 
+              box-shadow 160ms var(--ease-out); } button:active {
+  transform: scale(0.97);
+}
+```
+
+### 5.3 Control Segmentado Deslizante (Segmented Sliding Rail) En lugar de cambiar de fondo bruscamente, una pastilla deslizante blanca con `shadow-lift` viaja físicamente entre opciones:
+* Utiliza un `ResizeObserver` sobre el botón activo para calcular `offsetLeft` y `offsetWidth`.
+* Aplica `transform: translateX(${thumb.x}px)` y `width: ${thumb.w}px` con transición de `220ms var(--ease-out)`.
+
+### 5.4 Loader de Terminal Braille (TerminalLoader) Para estados de inferencia y carga de modelos LLM, se sustituye el clásico spinner circular por un ciclo de caracteres Braille que avanza cada 80 ms:
+```typescript
+const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']; ```
+Muestra:
+`[⠿ / FRAME] [Verbo rotativo cada 4 segundos]… [Tiempo en segundos con tabular-nums]`
+Ejemplo: `⠸ contrastando la evidencia… 8s`
+
+### 5.5 Caret de Escritura en Vivo
+Un cursor vertical parpadeante estilo terminal:
+```css
+.caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 0.9em;
+  margin-left: 1px;
+  vertical-align: -0.08em;
+  background: var(--color-ink);
+  animation: caret 1.05s steps(1) infinite; } @keyframes caret {
+  50% { opacity: 0; }
+}
+```
+
+### 5.6 Coreografía del Walkthrough (Demo Automática de la Landing) La landing cuenta una historia interactiva de **41 segundos** dividida en 7 capítulos coordinados mediante un reloj maestro (`motionValue(0)`):
+1. **Definir (7.0s):** Escritura automática carácter por carácter a 32 ms por letra con subida de adjuntos `DEMO_PROMPT`.
+2. **Revisar (5.0s):** Inspección secuencial de 3 reglas propuestas, con retardo escalonado de 45 ms entre elementos.
+3. **Comprobar (6.5s):** Validación con ejemplos históricos y reportes de compilación sintáctica.
+4. **Publicar (4.0s):** Activación de versión inmutable con badge `v3 publicada`.
+5. **Recibir (4.5s):** Cursor arrastra un lote de 6 PDFs a la zona de drop (`DropZone`).
+6. **Decidir (5.5s):** Procesamiento en cascada de facturas emitiendo resoluciones (`PAGAR`, `ESCALAR`, `NO_PAGAR`).
+7. **Trazar (8.5s):** Apertura de un caso específico desplegando el árbol de decisión forense.
+
+#### El Cursor SVG y Ripple Táctil
+El cursor es un vector SVG renderizado en overlay absoluto:
+```svg
+<svg width="22" height="24" viewBox="0 0 22 24">
+  <path d="M4 3 19 11 12 13 9 20Z" fill="var(--color-ink)" stroke="var(--color-surface)" strokeWidth="1.5" strokeLinejoin="round" /> </svg> ```
+* **Interpolación suave:** Utiliza una función de aceleración polinómica de 5º grado sin sobreoscilación:
+  `ease(t) = t³ · (t · (6t - 15) + 10)`.
+* **Efecto de pulsación (Tap):** Al hacer clic, emite dos anillos concéntricos: uno perimetral `border border-ink` (`size-6`) y un punto central `bg-ink` (`size-4`).
+* **Tooltip flotante en drag:** Durante el arrastre de archivos, el cursor lleva adherido un badge flotante con sombra elevada: `[FileText Icon] 6 PDF`.
+
+### 5.7 Política Estricta de Accesibilidad de Movimiento Si el usuario tiene activado `prefers-reduced-motion: reduce`:
+* El scroll cambia de `smooth` a `auto` o `instant`.
+* Las animaciones de cursor y efectos de pulsación se omiten por completo (`return null`).
+* El walkthrough arranca directamente en el estado final interactivo (Capítulo 7) sin forzar reproducción.
+
+---
+
+## 6. Arquitectura UX/UI y Organización Visual
+
+La aplicación se estructura en dos modos espaciales:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        ARQUITECTURA DE LA WEB                          │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. MODO LANDING (Presentación & Storytelling)                          │
+│    ├── Header sticky (backdrop-blur-md, h-14, logo + "Abrir consola")  │
+│    ├── Main Story Walkthrough                                          │
+│    │    ├── Título y subtítulo dinámico con AnimatePresence            │
+│    │    ├── Marco de Simulación OS (3 puntos, route trace.it/.. <http://trace.it/..> .)      │
+│    │    │    └── Instancia viva de AppShell embebida en sandboxing     │
+│    │    ├── Barra de Control (Play/Pause, Prev, Next, Progreso 1-7)    │
+│    │    └── Selector de Factura de muestra                             │
+│    └── Colophon Footer (Logotipos HackSpain × Maisa)                   │
+├────────────────────────────────────────────────────────────────────────┤
+│ 2. MODO CONSOLA / APP (Entorno de Trabajo Fijo h-dvh)                 │
+│    ├── Canvas exterior (#f4f4f2)                                       │
+│    ├── Sidebar Colapsable (232px extendido / 64px colapsado)           │
+│    │    ├── Header (TraceMark + Wordmark + Botón PanelLeftOpen/Close) │
+│    │    ├── Lista de Procesos y estados de salud                       │
+│    │    └── Pie de perfil de usuario / Switch de Cuenta                │
+│    ├── Shell Interior (#ffffff, rounded-[20px], shadow-shell)          │
+│    │    ├── Topbar / Breadcrumbs (Ruta de migas, acciones de versión)  │
+│    │    └── Pantalla Activa con Split-Panes según función             │
+│    └── Modal Drawer en móvil (0 a -100% translateX)                    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 6.1 Desglose de Pantallas y Componentes Clave
+
+#### A. Definición y Borrador (`/processes/:id/chat`)
+* **Split Layout 2 Columnas:**
+  * **Columna Izquierda (Chat de Descubrimiento):** Entrada estilo mensajería con soporte de arrastrar hojas de cálculo (`.xlsx`, `.csv`, `.json`), chips de previsualización de archivos y botón circular de envío con icono de flecha hacia arriba.
+  * **Columna Derecha (Panel de Inspección de Reglas):** Tarjetas anidadas (`NestedCard`) que presentan el NIF/IBAN, tolerancia de importes y estado ERP con botones de aprobación explícita.
+
+#### B. Bandeja de Ejecución (`/processes/:id/instances` o `Queue`)
+* **Lista de instancias procesadas:**
+  * Nombre de fichero / Identificador de factura.
+  * Status Badge (`PAGAR`, `NO_PAGAR`, `ESCALAR`).
+  * Motivo sucinto de la resolución (`reason`).
+  * Metadatos de auditoría: autor (`engine` vs `humano`), marca temporal e importe detectado.
+* **Filtros rápidos con Segmented Rail:** Todos, Pendientes, Decididos, Con conflicto.
+
+#### C. Inspector Forense de Traza (`TracePane`) Al seleccionar una factura, se abre la vista detallada de trazabilidad:
+1. **Cabecera del Caso:** Icono en caja redondeada de 40×40 px con el veredicto en color semántico (`CheckCircle2`, `XCircle` o `ClipboardList`).
+2. **Origen de Datos:** Si provino de correo electrónico, desglose de cuenta, remitente, asunto y UID.
+3. **Valores de Símbolos (`symbols`):** Tabla detallada de cada variable extraída (p. ej. `importe_total`, `iban_factura`, `nif_proveedor`), indicando su origen exacto (p. ej. celda de Excel o coordenada OCR).
+4. **Evaluación de Reglas (`rule_results`):** Lista de todas las reglas del proceso indicando si la regla "disparó" (`fires: true`) o se cumplió satisfactoriamente, junto con la justificación del motor.
+5. **Visor Emergente del Documento Original (`DocumentPopup`):** Superposición para contrastar la decisión contra el PDF original escaneado.
+
+#### D. Telemetría y Métricas (`/metrics`)
+* **KPIs superiores:** Tarjetas con cifras en tipografía `.u-figure` (Coste USD total, tokens de entrada/salida acumulados, latencia percentil p50/p95).
+* **UsageTimeline:** Gráfico vectorial interactivo SVG con líneas de nivel (`--color-hairline`), áreas semitransparentes por cada plano (`ingestion`, `agents`, `execution`), cursor vertical punteado y selector de rango temporal.
+* **UsageFlow (Diagrama Sankey):** Visualizador de ribbons proporcionales que distribuye el consumo desde el Coste Total $\rightarrow$ Planos operativos $\rightarrow$ Modelos de IA utilizados.
+
+#### E. Ajustes y Personalización (`/settings`)
+* Selector segmentado de apariencia: **Luz (Light)** vs **Oscuridad (Dark)**.
+* Selector de idioma (Español / Inglés).
+* Matriz de modelos LLM asignados a cada caso de uso.
+
+---
+
+## 7. Guía de Reutilización para Nuevos Desarrollos
+
+Para mantener coherencia idéntica en futuras pantallas o herramientas del ecosistema Trace-It, respeta estas 7 reglas fundamentales:
+
+1. **Nunca uses bordes sólidos negros o grises genéricos:** Usa siempre `ring-1 ring-line` (`#0000000f` en claro, `#ffffff29` en oscuro) o `border-hairline`.
+2. **Conserva el lienzo flotante:** Mantén siempre el contenedor perimetral `bg-canvas` y el espacio de trabajo encapsulado en `bg-shell rounded-[20px] shadow-shell`.
+3. **Aplica siempre micro-prensado:** Todo elemento botón interactivo debe llevar `active:scale-[0.97]` con curva `var(--ease-out)`.
+4. **Respeta la tipografía especializada:** Texto estándar en `Geist Sans`, números y monedas en `Geist Mono` con `.u-figure` (`tabular-nums`), y tags en `font-mono text-[10px] uppercase`.
+5. **Alinea los colores a la semántica de auditoría:** No uses verdes, amarillos ni rojos estándar. Usa rigurosamente las duplas `text-pagar` / `bg-pagar-soft`, `text-escalar` / `bg-escalar-soft` y `text-nopagar` / `bg-nopagar-soft`.
+6. **Estados de espera con personalidad:** Para llamadas asíncronas o de IA, implementa el `TerminalLoader` con frames Braille y verbos de progreso en castellano natural.
+7. **Soporte de reducción de movimiento:** Envuelve animaciones complejas en verificaciones de `prefers-reduced-motion`.
+
