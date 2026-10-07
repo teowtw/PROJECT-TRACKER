@@ -70,20 +70,21 @@ let weeklyTasks = [];
 let incidents = [];
 let dayPersonalTasks = [];
 let currentUser = null;
-const APP_LOGIN_PASSWORD = 'admin123';
+const APP_LOGIN_PASSWORD = 'WEai2026!';
 const APP_LOGIN_STORAGE_KEY = 'wtw_login_session_v1';
 const APP_CURRENT_USER_STORAGE_KEY = 'wtw_current_user';
 const APP_USERS_STORAGE_KEY = 'wtw_user_directory_v1';
 const APP_USERS_TABLE = 'app_users';
 const DAY_PERSONAL_TASKS_TABLE = 'day_personal_tasks';
 const APP_LOGIN_EXPIRY_DAYS = 30;
+// Equipo WE AI Implementation Analysts. Contraseña inicial compartida (ver
+// APP_LOGIN_PASSWORD); cada persona puede cambiarla luego desde su perfil.
 const DEFAULT_USERS = [
-    { initials: 'AP', email: 'alvaro.perez@wtwco.com' },
+    { initials: 'TB', email: 'teo.balsalobre@wtwco.com' },
     { initials: 'AR', email: 'ana.real@wtwco.com' },
-    { initials: 'HR', email: 'huri.rodriguez@wtwco.com' },
-    { initials: 'IS', email: 'ignacio.sanchez@wtwco.com' },
-    { initials: 'MR', email: 'mileni.rodriguez@wtwco.com' },
-    { initials: 'PU', email: 'polina.utkina@wtwco.com' }
+    { initials: 'AD', email: 'abha.dungdung@wtwco.com' },
+    { initials: 'JG', email: 'jorge.gazulla@wtwco.com' },
+    { initials: 'IM', email: 'ines.marcelino@wtwco.com' }
 ];
 let userDirectory = {};
 let userDirectorySource = 'local';

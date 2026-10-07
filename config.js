@@ -1,6 +1,6 @@
-// Configuración de Supabase (producción)
-const SUPABASE_URL = "https://snyvvbwkkqpecfcvvdid.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNueXZ2Yndra3FwZWNmY3Z2ZGlkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwMjc3MDYsImV4cCI6MjA4NDYwMzcwNn0.szk1Do5oUAEg6zsqBGAIWC43zULtB1rDtmF8O9i2i9s";
+// Configuración de Supabase (WE AI Implementation Analysts — proyecto nuevo)
+const SUPABASE_URL = "https://uidqrmzxvhnaolhkeihb.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_mmOKpLqnfXWhYQpMMOsANw_EahBub-8";
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
