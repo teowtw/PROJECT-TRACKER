@@ -1,18 +1,132 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="420" height="110" viewBox="0 0 420 110" role="img" aria-labelledby="title desc">
-  <title id="title">P&OI</title>
-  <desc id="desc">Logo P and OI in purple</desc>
+<svg width="700" height="500" viewBox="0 0 700 500" xmlns="http://www.w3.org/2000/svg">
+
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#7a1ea2"/>
-      <stop offset="100%" stop-color="#5f1680"/>
+    <linearGradient id="wtwGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4B1F75"/>
+      <stop offset="50%" stop-color="#7133A2"/>
+      <stop offset="100%" stop-color="#B56DDA"/>
+    </linearGradient>
+
+    <linearGradient id="globeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#DCCCF1"/>
+      <stop offset="100%" stop-color="#B090D0"/>
     </linearGradient>
   </defs>
 
-  <g fill="url(#g)">
-    <path d="M22 16h38c18 0 30 10 30 26s-12 26-30 26H48v26H22V16zm26 20v22h11c8 0 13-4 13-11s-5-11-13-11H48z"/>
-    <path d="M108 80c0-8 6-14 14-14s14 6 14 14-6 14-14 14-14-6-14-14z"/>
-    <path d="M178 16c23 0 41 17 41 39s-18 39-41 39-41-17-41-39 18-39 41-39zm0 18c-13 0-23 9-23 21s10 21 23 21 23-9 23-21-10-21-23-21z"/>
-    <path d="M241 16h27v78h-27V16z"/>
-    <path d="M289 16h27v78h-27V16z"/>
+  <!-- Globe -->
+  <circle
+      cx="350"
+      cy="180"
+      r="130"
+      fill="none"
+      stroke="url(#globeGradient)"
+      stroke-width="5"/>
+
+  <!-- Latitude -->
+  <ellipse
+      cx="350"
+      cy="180"
+      rx="115"
+      ry="40"
+      fill="none"
+      stroke="url(#globeGradient)"
+      stroke-width="4"/>
+
+  <ellipse
+      cx="350"
+      cy="180"
+      rx="115"
+      ry="80"
+      fill="none"
+      stroke="url(#globeGradient)"
+      stroke-width="4"/>
+
+  <!-- Longitude -->
+  <ellipse
+      cx="350"
+      cy="180"
+      rx="55"
+      ry="130"
+      fill="none"
+      stroke="url(#globeGradient)"
+      stroke-width="4"/>
+
+  <ellipse
+      cx="350"
+      cy="180"
+      rx="92"
+      ry="130"
+      fill="none"
+      stroke="url(#globeGradient)"
+      stroke-width="4"/>
+
+  <!-- Connections -->
+  <line x1="350" y1="180" x2="350" y2="60"
+        stroke="#B56DDA" stroke-width="2"/>
+
+  <line x1="350" y1="180" x2="245" y2="110"
+        stroke="#B56DDA" stroke-width="2"/>
+
+  <line x1="350" y1="180" x2="455" y2="110"
+        stroke="#B56DDA" stroke-width="2"/>
+
+  <circle cx="350" cy="60" r="7" fill="#B56DDA"/>
+  <circle cx="245" cy="110" r="7" fill="#B56DDA"/>
+  <circle cx="455" cy="110" r="7" fill="#B56DDA"/>
+
+  <!-- AI -->
+  <g transform="translate(230 110)">
+    <path
+      d="M60 0 L120 135 H95 L82 100 H38 L25 135 H0 L60 0Z
+         M50 70 H72 L60 42 Z"
+      fill="url(#wtwGradient)"/>
+
+    <rect
+      x="150"
+      y="0"
+      width="28"
+      height="135"
+      rx="14"
+      fill="url(#wtwGradient)"/>
+
+    <rect
+      x="128"
+      y="0"
+      width="72"
+      height="26"
+      rx="13"
+      fill="url(#wtwGradient)"/>
+
+    <rect
+      x="128"
+      y="109"
+      width="72"
+      height="26"
+      rx="13"
+      fill="url(#wtwGradient)"/>
   </g>
+
+  <!-- Team Name -->
+  <text
+      x="350"
+      y="390"
+      text-anchor="middle"
+      font-family="Segoe UI, Arial"
+      font-size="28"
+      font-weight="700"
+      fill="#4B1F75">
+      WE AI IMPLEMENTATION
+  </text>
+
+  <text
+      x="350"
+      y="425"
+      text-anchor="middle"
+      font-family="Segoe UI, Arial"
+      font-size="24"
+      font-weight="500"
+      fill="#7133A2">
+      ANALYSTS
+  </text>
+
 </svg>

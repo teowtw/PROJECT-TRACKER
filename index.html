@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PROD - WTW - Gestor de Proyectos</title>
+    <title>Project Tracker - WE AI Implementation Analysts</title>
 	<link rel="icon" type="image/x-icon" href="calendar.ico">
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,16 +15,16 @@
 <body>
     <div class="login-screen" id="loginScreen">
         <div class="login-card">
-            <img src="logo.png?v=20260521b" alt="P&OI" class="login-logo" onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
-            <div class="login-logo-fallback" style="display:none;">P&amp;OI</div>
-            <h1 class="login-title">Gestor de Proyectos</h1>
+            <img src="logo.svg" alt="WE AI Implementation Analysts" class="login-logo" onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
+            <div class="login-logo-fallback" style="display:none;">WE AI</div>
+            <h1 class="login-title">Project Tracker</h1>
 
             <form class="login-form" id="loginForm" novalidate>
-                <label class="visually-hidden" for="loginInitials">Iniciales</label>
-                <input type="text" id="loginInitials" class="login-input" placeholder="Iniciales (ej: IS)" autocomplete="username" maxlength="6">
-                <label class="visually-hidden" for="loginPassword">Contraseña</label>
-                <input type="password" id="loginPassword" class="login-input" placeholder="Contraseña" autocomplete="current-password">
-                <button class="login-button" id="loginButton" type="submit">Entrar</button>
+                <label class="visually-hidden" for="loginInitials">Initials</label>
+                <input type="text" id="loginInitials" class="login-input" placeholder="Initials (e.g.: TB)" autocomplete="username" maxlength="6">
+                <label class="visually-hidden" for="loginPassword">Password</label>
+                <input type="password" id="loginPassword" class="login-input" placeholder="Password" autocomplete="current-password">
+                <button class="login-button" id="loginButton" type="submit">Sign In</button>
                 <div class="login-error" id="loginError" aria-live="polite"></div>
             </form>
         </div>
@@ -33,14 +33,14 @@
     <div id="appShell" class="app-shell app-shell--hidden">
     <div class="container">
         <div class="sidebar" id="sidebar">
-            <button type="button" class="sidebar-toggle-btn" id="sidebarToggle" onclick="toggleSidebar()" title="Contraer panel" aria-label="Contraer panel" aria-expanded="true">◀</button>
-            <div class="sidebar-logo">WTW</div>
-            <div class="sidebar-subtitle">Gestor de proyectos</div>
-            <button type="button" class="btn-new-project" onclick="openNewProjectModal()">✨ Nuevo proyecto</button>
+            <button type="button" class="sidebar-toggle-btn" id="sidebarToggle" onclick="toggleSidebar()" title="Collapse panel" aria-label="Collapse panel" aria-expanded="true">◀</button>
+            <div class="sidebar-logo">WE AI</div>
+            <div class="sidebar-subtitle">Project Tracker</div>
+            <button type="button" class="btn-new-project" onclick="openNewProjectModal()">✨ New Project</button>
 
             <div class="sidebar-content">
                 <button type="button" class="sidebar-title" id="sidebarTitleActivos" aria-expanded="true" aria-controls="projectsListActive" onclick="toggleSidebarSection('activos')">
-                    <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>Activos
+                    <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>Active
                 </button>
                 <ul class="sidebar-list projects-list expanded" id="projectsListActive"></ul>
 
@@ -50,17 +50,17 @@
                 <ul class="sidebar-list projects-list expanded" id="projectsListBau"></ul>
 
                 <button type="button" class="sidebar-title" id="sidebarTitleCompletados" aria-expanded="true" aria-controls="projectsListCompleted" onclick="toggleSidebarSection('completados')">
-                    <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>Completados
+                    <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>Completed
                 </button>
                 <ul class="sidebar-list projects-list expanded" id="projectsListCompleted"></ul>
             </div>
 
-            <!-- Control de usuario -->
+            <!-- User Control -->
             <div class="user-control">
                 <div class="user-icon" aria-hidden="true">👤</div>
                 <div class="user-info">
-                    <button type="button" class="user-change-btn" onclick="openUserSettingsModal()">Ajustes</button>
-                    <button type="button" class="user-change-btn" onclick="logoutCurrentUser()">Salir</button>
+                    <button type="button" class="user-change-btn" onclick="openUserSettingsModal()">Settings</button>
+                    <button type="button" class="user-change-btn" onclick="logoutCurrentUser()">Logout</button>
                 </div>
             </div>
         </div>
@@ -69,13 +69,13 @@
         <div class="main-content">
             <div class="toolbar">
                 <div class="toolbar-left">
-                    <button class="mobile-menu-toggle" id="mobileMenuToggle" type="button" aria-label="Abrir menú de proyectos" aria-controls="sidebar" aria-expanded="false" onclick="toggleMobileSidebar()">☰</button>
+                    <button class="mobile-menu-toggle" id="mobileMenuToggle" type="button" aria-label="Open projects menu" aria-controls="sidebar" aria-expanded="false" onclick="toggleMobileSidebar()">☰</button>
                     <h2 id="viewTitle">Daily</h2>
                 </div>
-                <div class="view-toggle" role="group" aria-label="Vistas">
+                <div class="view-toggle" role="group" aria-label="Views">
                     <button type="button" class="active" data-view="daily" aria-pressed="true" onclick="switchView('daily')">📅 Daily</button>
-                    <button type="button" data-view="ficha" aria-pressed="false" onclick="switchView('ficha')">📋 Ficha Proyecto</button>
-                    <button type="button" data-view="equipo" aria-pressed="false" onclick="switchView('equipo')">👥 Equipo</button>
+                    <button type="button" data-view="ficha" aria-pressed="false" onclick="switchView('ficha')">📋 Project Details</button>
+                    <button type="button" data-view="equipo" aria-pressed="false" onclick="switchView('equipo')">👥 Team</button>
                     <button type="button" data-view="dashboard" aria-pressed="false" onclick="switchView('dashboard')">📈 Dashboard</button>
                 </div>
             </div>
@@ -83,24 +83,24 @@
             <div class="content-area">
                 <div class="daily-view active" id="dailyView" data-view="daily">
                     <div class="week-navigation">
-                        <button type="button" class="week-nav-btn" onclick="previousWeek()">← Semana anterior</button>
+                        <button type="button" class="week-nav-btn" onclick="previousWeek()">← Previous Week</button>
                         <div class="week-center">
-                            <button type="button" class="week-nav-btn" id="todayBtn" onclick="goToday()">Hoy</button>
+                            <button type="button" class="week-nav-btn" id="todayBtn" onclick="goToday()">Today</button>
                             <div class="week-info" id="weekInfo" aria-live="polite"></div>
                         </div>
-                        <button type="button" class="week-nav-btn" onclick="nextWeek()">Semana siguiente →</button>
+                        <button type="button" class="week-nav-btn" onclick="nextWeek()">Next Week →</button>
                     </div>
 
                     <div class="daily-mode-bar">
                         <div class="daily-mode-toggle">
                             <button type="button" id="btnDailyActivos" class="active" aria-pressed="true"
-                                onclick="setDailyViewMode('activos')">Activos</button>
+                                onclick="setDailyViewMode('activos')">Active</button>
                             <button type="button" id="btnDailyBau" aria-pressed="false" onclick="setDailyViewMode('bau')">BAU</button>
-                            <button type="button" id="btnDailyCompletados" aria-pressed="false" onclick="setDailyViewMode('completados')">Completados</button>
+                            <button type="button" id="btnDailyCompletados" aria-pressed="false" onclick="setDailyViewMode('completados')">Completed</button>
                         </div>
-                        <ul class="daily-legend" aria-label="Leyenda de celdas">
-                            <li><span class="legend-swatch legend-swatch--pending"></span>Pendiente (tuyo o sin responsable)</li>
-                            <li><span class="legend-swatch legend-swatch--personal"></span>Tarea personal pendiente</li>
+                        <ul class="daily-legend" aria-label="Cell legend">
+                            <li><span class="legend-swatch legend-swatch--pending"></span>Pending (yours or unassigned)</li>
+                            <li><span class="legend-swatch legend-swatch--personal"></span>Personal task pending</li>
                         </ul>
                         <div id="dailyRespFilter" class="daily-resp-filter-inline"></div>
                     </div>
@@ -120,57 +120,57 @@
 
     <div class="modal" id="dailyModal" data-dirty-check>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dailyModalTitle">
-            <div class="modal-title" id="dailyModalTitle">Nuevo comentario Daily</div>
+            <div class="modal-title" id="dailyModalTitle">New Daily Comment</div>
             <div class="form-group">
-                <label for="commentProjectSelect">Proyecto <span class="required-mark" aria-hidden="true">*</span></label>
+                <label for="commentProjectSelect">Project <span class="required-mark" aria-hidden="true">*</span></label>
                 <select id="commentProjectSelect" required>
-                    <option value="">Selecciona un proyecto...</option>
+                    <option value="">Select a project...</option>
                 </select>
             </div>
             <div class="form-group">
-                <label for="commentResponsible">Responsable</label>
+                <label for="commentResponsible">Responsible</label>
                 <select id="commentResponsible">
-                    <option value="">Sin responsable</option>
+                    <option value="">No responsible</option>
                 </select>
             </div>
             <div class="form-group">
-                <label for="commentUrgency">Urgencia</label>
+                <label for="commentUrgency">Urgency</label>
                 <select id="commentUrgency">
                     <option value="Normal">Normal</option>
-                    <option value="Alta">Alta</option>
-                    <option value="Máxima">Máxima</option>
+                    <option value="Alta">High</option>
+                    <option value="Máxima">Critical</option>
                 </select>
             </div>
             <div class="form-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="commentIncident">
-                    Tiene incidencia
+                    Has incident
                 </label>
             </div>
             <div class="form-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="commentPersonal" onchange="onPersonalTaskToggle()">
-                    Tarea personal (solo visible para mí)
+                    Personal task (only visible to me)
                 </label>
             </div>
             <div class="form-group">
-                <label for="commentText">Comentario <span class="required-mark" aria-hidden="true">*</span></label>
-                <textarea id="commentText" placeholder="Escribe tu comentario..." required></textarea>
+                <label for="commentText">Comment <span class="required-mark" aria-hidden="true">*</span></label>
+                <textarea id="commentText" placeholder="Write your comment..." required></textarea>
             </div>
             <div class="modal-buttons">
-                <button type="button" class="btn btn-primary" onclick="saveDailyComment()">Guardar</button>
-                <button type="button" class="btn btn-cancel" onclick="closeDailyModal()">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveDailyComment()">Save</button>
+                <button type="button" class="btn btn-cancel" onclick="closeDailyModal()">Cancel</button>
             </div>
         </div>
     </div>
 
     <div class="modal" id="commentsListModal" data-backdrop-close>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="commentsListTitle">
-            <div class="modal-title" id="commentsListTitle">Comentarios del día</div>
+            <div class="modal-title" id="commentsListTitle">Day Comments</div>
             <div id="commentsListContainer"></div>
             <div class="modal-buttons">
-                <button type="button" class="btn btn-primary" onclick="openAddCommentFromList()">Añadir más</button>
-                <button type="button" class="btn btn-cancel" onclick="closeCommentsListModal()">Cerrar</button>
+                <button type="button" class="btn btn-primary" onclick="openAddCommentFromList()">Add More</button>
+                <button type="button" class="btn btn-cancel" onclick="closeCommentsListModal()">Close</button>
             </div>
         </div>
     </div>
@@ -178,113 +178,113 @@
     <div class="modal" id="dayPersonalTasksModal" data-backdrop-close>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dayPersonalTasksTitle">
             <div class="day-personal-modal-header">
-                <button type="button" class="btn btn-cancel day-personal-nav-btn" onclick="previousDayPersonalTasksDate()" aria-label="Día laborable anterior">◀</button>
-                <div class="modal-title" id="dayPersonalTasksTitle">Tareas personales del día</div>
-                <button type="button" class="btn btn-cancel day-personal-nav-btn" onclick="nextDayPersonalTasksDate()" aria-label="Día laborable siguiente">▶</button>
+                <button type="button" class="btn btn-cancel day-personal-nav-btn" onclick="previousDayPersonalTasksDate()" aria-label="Previous working day">◀</button>
+                <div class="modal-title" id="dayPersonalTasksTitle">Personal Tasks for Today</div>
+                <button type="button" class="btn btn-cancel day-personal-nav-btn" onclick="nextDayPersonalTasksDate()" aria-label="Next working day">▶</button>
             </div>
 
             <div id="dayPersonalTasksList"></div>
 
             <div class="day-personal-add-row">
-                <label class="visually-hidden" for="dayPersonalTaskInput">Nueva tarea personal del día</label>
-                <input type="text" id="dayPersonalTaskInput" placeholder="Nueva tarea personal del día..." onkeydown="if(event.key==='Enter') addDayPersonalTask()">
-                <button type="button" class="btn btn-primary" onclick="addDayPersonalTask()">Añadir</button>
+                <label class="visually-hidden" for="dayPersonalTaskInput">New personal task for today</label>
+                <input type="text" id="dayPersonalTaskInput" placeholder="New personal task..." onkeydown="if(event.key==='Enter') addDayPersonalTask()">
+                <button type="button" class="btn btn-primary" onclick="addDayPersonalTask()">Add</button>
             </div>
 
             <div class="modal-buttons">
-                <button type="button" class="btn btn-cancel" onclick="closeDayPersonalTasksModal()">Cerrar</button>
+                <button type="button" class="btn btn-cancel" onclick="closeDayPersonalTasksModal()">Close</button>
             </div>
         </div>
     </div>
 
     <div class="modal" id="vacationOptionsModal" data-backdrop-close>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="vacationOptionsTitle">
-            <div class="modal-title" id="vacationOptionsTitle">Asignar vacaciones</div>
+            <div class="modal-title" id="vacationOptionsTitle">Assign Leave</div>
             <p class="vacation-selection-label" id="vacationSelectionLabel"></p>
             <div class="form-group">
-                <label for="vacationTypeSelect">Imputar al saldo</label>
+                <label for="vacationTypeSelect">Charge to Balance</label>
                 <select id="vacationTypeSelect"></select>
             </div>
             <div class="modal-buttons">
-                <button class="btn btn-primary" type="button" onclick="saveVacationSelection()">Guardar</button>
-                <button class="btn btn-cancel" type="button" onclick="closeVacationOptionsModal()">Cancelar</button>
+                <button class="btn btn-primary" type="button" onclick="saveVacationSelection()">Save</button>
+                <button class="btn btn-cancel" type="button" onclick="closeVacationOptionsModal()">Cancel</button>
             </div>
         </div>
     </div>
 
     <div class="modal" id="userSettingsModal" data-dirty-check>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="userSettingsTitle">
-            <div class="modal-title" id="userSettingsTitle">Ajustes de usuario</div>
+            <div class="modal-title" id="userSettingsTitle">User Settings</div>
 
-            <!-- Form propio para que el navegador no agrupe estas contraseñas con otros campos de la app -->
+            <!-- Separate form to prevent browser password grouping -->
             <form id="userSettingsForm" style="display: contents" autocomplete="off" onsubmit="return false">
             <div class="form-group">
-                <label for="settingsInitials">Iniciales</label>
-                <input type="text" id="settingsInitials" maxlength="6" placeholder="Ej: IS" autocomplete="username">
+                <label for="settingsInitials">Initials</label>
+                <input type="text" id="settingsInitials" maxlength="6" placeholder="e.g.: TB" autocomplete="username">
             </div>
 
             <div class="form-group">
                 <label for="settingsEmail">Email</label>
-                <input type="email" id="settingsEmail" placeholder="nombre.apellido@wtwco.com" autocomplete="email">
+                <input type="email" id="settingsEmail" placeholder="name.surname@wtwco.com" autocomplete="email">
             </div>
 
             <div class="form-group">
-                <label for="settingsPassword">Nueva contraseña</label>
-                <input type="password" id="settingsPassword" placeholder="Dejar vacío para no cambiar" autocomplete="new-password">
+                <label for="settingsPassword">New Password</label>
+                <input type="password" id="settingsPassword" placeholder="Leave empty to keep current" autocomplete="new-password">
             </div>
 
             <div class="form-group">
-                <label for="settingsPasswordConfirm">Confirmar nueva contraseña</label>
-                <input type="password" id="settingsPasswordConfirm" placeholder="Repite la nueva contraseña" autocomplete="new-password">
+                <label for="settingsPasswordConfirm">Confirm New Password</label>
+                <input type="password" id="settingsPasswordConfirm" placeholder="Repeat the new password" autocomplete="new-password">
             </div>
             </form>
 
             <div class="login-error" id="settingsError" aria-live="polite"></div>
 
             <div class="modal-buttons">
-                <button type="button" class="btn btn-primary" onclick="saveUserSettings()">Guardar</button>
-                <button type="button" class="btn btn-secondary" onclick="logoutCurrentUser()">Cerrar sesión</button>
-                <button type="button" class="btn btn-cancel" onclick="closeUserSettingsModal()">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveUserSettings()">Save</button>
+                <button type="button" class="btn btn-secondary" onclick="logoutCurrentUser()">Logout</button>
+                <button type="button" class="btn btn-cancel" onclick="closeUserSettingsModal()">Cancel</button>
             </div>
         </div>
     </div>
 
     <div class="modal" id="projectModal" data-dirty-check>
         <div class="modal-content modal-project" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="projectModalTitle">
-            <div class="modal-title" id="projectModalTitle">Crear nuevo proyecto</div>
+            <div class="modal-title" id="projectModalTitle">Create New Project</div>
             <div class="form-group">
-                <label for="projectName">Nombre de la iniciativa <span class="required-mark" aria-hidden="true">*</span></label>
-                <input type="text" id="projectName" placeholder="Ej: Automatización de Claims..." required>
+                <label for="projectName">Project Name <span class="required-mark" aria-hidden="true">*</span></label>
+                <input type="text" id="projectName" placeholder="e.g.: Claims Automation..." required>
             </div>
             <div class="form-group">
-                <label for="projectStartDate">Fecha inicio</label>
+                <label for="projectStartDate">Start Date</label>
                 <input type="date" id="projectStartDate">
             </div>
             <div class="form-group">
-                <label for="projectEndDate">Fecha fin</label>
+                <label for="projectEndDate">End Date</label>
                 <input type="date" id="projectEndDate">
             </div>
             <div class="form-group">
-                <label for="projectPhase">Fase del proyecto</label>
+                <label for="projectPhase">Project Phase</label>
                 <select id="projectPhase">
                 </select>
             </div>
             <div class="form-group">
                 <label for="projectStakeholders">Stakeholders</label>
-                <input type="text" id="projectStakeholders" placeholder="Ej: Juan (Product Owner), María (IT), ...">
+                <input type="text" id="projectStakeholders" placeholder="e.g.: John (Product Owner), Maria (IT), ...">
             </div>
             <div class="form-group">
-                <label for="volume">Ahorro (€)</label>
-                <input type="number" id="volume" placeholder="Ej: 50000" min="0" step="0.01">
+                <label for="volume">Savings (€)</label>
+                <input type="number" id="volume" placeholder="e.g.: 50000" min="0" step="0.01">
             </div>
             <div class="form-group">
-                <label for="fte">Ahorro (FTE)</label>
-                <input type="number" id="fte" placeholder="Ej: 1.5" min="0" step="0.1">
+                <label for="fte">Savings (FTE)</label>
+                <input type="number" id="fte" placeholder="e.g.: 1.5" min="0" step="0.1">
             </div>
 
             <div class="modal-buttons">
-                <button type="button" class="btn btn-primary" onclick="saveNewProject()">Crear proyecto</button>
-                <button type="button" class="btn btn-cancel" onclick="closeProjectModal()">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveNewProject()">Create Project</button>
+                <button type="button" class="btn btn-cancel" onclick="closeProjectModal()">Cancel</button>
             </div>
         </div>
     </div>
