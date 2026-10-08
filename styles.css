@@ -1032,6 +1032,11 @@ button:disabled {
     border: 1.5px solid rgba(255, 100, 0, 0.55);
 }
 
+#dailyTableContainer {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
 .daily-table {
     width: 100%;
     border-collapse: collapse;
@@ -1415,12 +1420,18 @@ button:disabled {
 
 .daily-table td.daily-cell {
     cursor: default;
-    min-width: 170px;
+    min-width: 118px;
     position: relative;
     background: var(--color-surface);
     min-height: 70px;
     vertical-align: top;
     transition: background 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+}
+
+.daily-table th.day-header,
+.daily-table td.daily-cell {
+    padding-left: 4px;
+    padding-right: 4px;
 }
 
 .daily-table td.daily-cell:hover {
@@ -5701,45 +5712,35 @@ button:disabled {
     padding: 12px 20px;
 }
 
-.ficha-description {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-card);
-    box-shadow: var(--shadow-lift);
-    padding: 14px 16px;
-    margin-bottom: 16px;
-}
-
-.ficha-description-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--color-muted);
-    margin-bottom: 6px;
-}
-
 .ficha-description-input {
+    display: block;
     width: 100%;
+    margin-top: 8px;
     border: none;
     background: transparent;
-    color: var(--color-text);
+    color: var(--color-muted);
     font-family: var(--font-sans);
-    font-size: 13px;
+    font-size: 12.5px;
     line-height: 1.5;
     resize: vertical;
-    min-height: 40px;
+    min-height: 20px;
+    padding: 0;
+}
+
+.ficha-description-input::placeholder {
+    color: var(--color-faint);
 }
 
 .ficha-description-input:focus {
     outline: none;
+    color: var(--color-text);
 }
 
 .ficha-bento {
     display: grid;
     grid-template-columns: repeat(4, minmax(220px, 1fr));
     gap: 16px;
-    align-items: start;
+    align-items: stretch;
     padding-bottom: 8px;
 }
 
@@ -5971,15 +5972,15 @@ button:disabled {
 }
 
 /* ----- Phase colours (donut segments + legend swatches) ----- */
-/* Ordinal purple ramp for the 8 in-flow pipeline phases (light -> dark = progression) */
-.phase-color-discovery   { fill: #D7C6F0; stroke: #D7C6F0; background: #D7C6F0; }
-.phase-color-design      { fill: #C7A6EA; stroke: #C7A6EA; background: #C7A6EA; }
-.phase-color-development { fill: #B284E6; stroke: #B284E6; background: #B284E6; }
-.phase-color-testing     { fill: #A06FDD; stroke: #A06FDD; background: #A06FDD; }
-.phase-color-pilot       { fill: #8F5BCF; stroke: #8F5BCF; background: #8F5BCF; }
-.phase-color-production  { fill: #7A4AB0; stroke: #7A4AB0; background: #7A4AB0; }
-.phase-color-hypercare   { fill: #642C99; stroke: #642C99; background: #642C99; }
-.phase-color-bau         { fill: #52247D; stroke: #52247D; background: #52247D; }
+/* Categorical palette: distinct hues for each project phase */
+.phase-color-discovery   { fill: #06B6D4; stroke: #06B6D4; background: #06B6D4; }
+.phase-color-design      { fill: #10B981; stroke: #10B981; background: #10B981; }
+.phase-color-development { fill: #F59E0B; stroke: #F59E0B; background: #F59E0B; }
+.phase-color-testing     { fill: #EF4444; stroke: #EF4444; background: #EF4444; }
+.phase-color-pilot       { fill: #8B5CF6; stroke: #8B5CF6; background: #8B5CF6; }
+.phase-color-production  { fill: #059669; stroke: #059669; background: #059669; }
+.phase-color-hypercare   { fill: #DC2626; stroke: #DC2626; background: #DC2626; }
+.phase-color-bau         { fill: #6B7280; stroke: #6B7280; background: #6B7280; }
 /* Outcome phases reuse the semantic status tokens */
 .phase-color-completed   { fill: var(--color-positive); stroke: var(--color-positive); background: var(--color-positive); }
 .phase-color-cancelled   { fill: var(--color-negative); stroke: var(--color-negative); background: var(--color-negative); }

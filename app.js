@@ -2821,7 +2821,7 @@ function renderCapacityWidget() {
             <div class="capacity-input-wrapper">
                 <input type="number"
                        class="capacity-input"
-                       aria-label="Capacity for ${user}, ${label.toLowerCase()} week (%)"
+                       aria-label="Capacity for ${user} this week (%)"
                        value="${value}"
                        min="0"
                        max="100"
@@ -3688,14 +3688,10 @@ function renderLastStatusWidget() {
         </div>
     </div>
 
-    </div>`;
+    <textarea class="ficha-description-input" rows="1" placeholder="Add a short project description..."
+        aria-label="Project description"
+        onchange="updateProjectField('${project.id}','description', this.value)">${escapeHtml(project.description || '')}</textarea>
 
-            // Short project description, below the header card.
-            html += `<div class="ficha-description">
-        <div class="ficha-description-label">Description</div>
-        <textarea class="ficha-description-input" rows="2" placeholder="Add a short project description..."
-            aria-label="Project description"
-            onchange="updateProjectField('${project.id}','description', this.value)">${escapeHtml(project.description || '')}</textarea>
     </div>`;
 
             // Details card (project fields) — first cell of the bento grid.
