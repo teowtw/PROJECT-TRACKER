@@ -4,27 +4,27 @@ const SUPABASE_ANON_KEY = "sb_publishable_mmOKpLqnfXWhYQpMMOsANw_EahBub-8";
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Prerrequisitos estándar para todos los proyectos
+// Standard prerequisites for every project
 const STANDARD_PREREQUISITES = [
     "Business Case",
     "Stakeholders",
-    "Cálculo de Ahorros",
-    "Aprobaciones",
+    "Savings Calculation",
+    "Approvals",
     "Project Plan",
-    "Comunicaciones",
-    "Traspaso a BAU",
+    "Communications",
+    "BAU Handover",
     "Testing",
     "Dashboards"
 ];
 
-// Fases del ciclo de vida de un proyecto. El orden define el orden en tablas y selectores.
-// BAU = el proyecto ha terminado y el mantenimiento lo llevamos nosotros.
-// Si el BAU lo lleva otro equipo, el proyecto pasa de Hypercare a Cerrado.
-const PROJECT_PHASES = ['Idea', 'En Progreso', 'On Hold', 'Hypercare', 'BAU', 'Cerrado'];
+// Project lifecycle phases. Order defines the order in tables and selectors.
+// BAU = the project has finished and our team keeps the maintenance.
+// If another team owns the BAU, the project moves from Hypercare to Completed/Cancelled.
+const PROJECT_PHASES = ['Discovery', 'Design', 'Development', 'Testing', 'Pilot', 'Production', 'Hypercare', 'BAU', 'Completed', 'Cancelled', 'On Hold'];
 
-// Quién lleva el BAU una vez terminado el proyecto
+// Who owns the BAU once the project has finished
 const BAU_OWNERS = [
-    { value: '', label: 'Sin definir' },
-    { value: 'propio', label: 'Nuestro equipo' },
-    { value: 'otro', label: 'Otro equipo' }
+    { value: '', label: 'Undefined' },
+    { value: 'propio', label: 'Our team' },
+    { value: 'otro', label: 'Another team' }
 ];

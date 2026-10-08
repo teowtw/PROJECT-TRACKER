@@ -14,13 +14,13 @@ function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', resolved);
     const toggle = document.getElementById('themeToggleBtn');
     if (toggle) {
-        toggle.textContent = resolved === 'dark' ? '☀️ Light mode' : '🌙 Dark mode';
+        toggle.textContent = resolved === 'dark' ? '◑ Light mode' : '◐ Dark mode';
         toggle.setAttribute('aria-pressed', resolved === 'dark' ? 'true' : 'false');
     }
 }
 
 function initTheme() {
-    applyTheme(getStoredTheme() || 'light');
+    applyTheme(getStoredTheme() || 'dark');
 }
 
 function toggleTheme() {
@@ -62,13 +62,13 @@ function handlePrereqClick(event, projectId, prereqName) {
     let prereqs = project.prerequisites || [];
     let item = prereqs.find(p => p.name === prereqName);
     let currentUrl = item && item.url ? item.url : '';
-    const rawUrl = prompt('Introduce la URL de documentación para "' + prereqName + '" (deja vacío para quitarla):', currentUrl);
+    const rawUrl = prompt('Enter the documentation URL for "' + prereqName + '" (leave empty to remove it):', currentUrl);
 
     if (rawUrl === null) return;
 
     const normalizedUrl = normalizeDocumentationUrl(rawUrl);
     if (normalizedUrl === null) {
-        showToast('URL inválida. Usa una URL http(s) válida.', 'error');
+        showToast('Invalid URL. Use a valid http(s) URL.', 'error');
         return;
     }
 
@@ -293,7 +293,7 @@ function getUserEmailByInitials(initials) {
 async function saveUserProfile(oldInitials, profile) {
     const oldKey = normalizeInitials(oldInitials);
     const newKey = normalizeInitials(profile && profile.initials);
-    if (!newKey) throw new Error('Iniciales inválidas');
+    if (!newKey) throw new Error('Invalid initials');
 
     if (oldKey && oldKey !== newKey) {
         delete userDirectory[oldKey];
@@ -318,7 +318,7 @@ async function saveUserProfile(oldInitials, profile) {
             }, { onConflict: 'initials' });
 
         if (upsertError) {
-            throw new Error(formatSupabaseError(upsertError, 'No se pudo guardar el usuario en Supabase'));
+            throw new Error(formatSupabaseError(upsertError, 'Could not save the user to Supabase'));
         }
 
         if (oldKey && oldKey !== newKey) {
@@ -431,7 +431,7 @@ function closeTopModal() {
     const fallback = document.querySelector('.modal.active');
     const id = top ? top.id : (fallback ? fallback.id : null);
     if (!id) return false;
-    if (isModalDirty(document.getElementById(id)) && !confirm('Tienes cambios sin guardar. ¿Descartarlos?')) return true;
+    if (isModalDirty(document.getElementById(id)) && !confirm('You have unsaved changes. Discard them?')) return true;
     const handler = MODAL_CLOSE_HANDLERS[id];
     if (handler) handler(); else closeModal(id);
     return true;
@@ -457,10 +457,18 @@ let sidebarCollapsed = {
     completados: false
 };
 
+// Fases heredadas de un vocabulario antiguo -> fase actual (PROJECT_PHASES)
+const LEGACY_PHASE_MAP = {
+    'Idea': 'Discovery',
+    'En Progreso': 'Development',
+    'Cerrado': 'Completed',
+    'Mantenimiento': 'BAU'
+};
+
 // Grupo de trabajo de un proyecto: activos (en curso), bau (lo mantenemos nosotros) o completados
 function getProjectGroup(project) {
     const phase = project && project.phase;
-    if (phase === 'Cerrado') return 'completados';
+    if (phase === 'Completed' || phase === 'Cancelled') return 'completados';
     if (phase === 'BAU') return 'bau';
     return 'activos';
 }
@@ -493,11 +501,11 @@ function renderSortableHeader(column, label, sortState, toggleFnName) {
     const isSorted = sortState.column === column;
     const indicator = isSorted ? (sortState.direction === 'asc' ? '▲' : '▼') : '';
     const ariaSort = isSorted ? (sortState.direction === 'asc' ? 'ascending' : 'descending') : 'none';
-    return `<th class="sortable-header" tabindex="0" aria-sort="${ariaSort}" title="Ordenar por ${escapeHtml(label)}" onclick="${toggleFnName}('${column}')" onkeydown="activateOnEnterOrSpace(event)">${label} <span class="sort-indicator" aria-hidden="true">${indicator}</span></th>`;
+    return `<th class="sortable-header" tabindex="0" aria-sort="${ariaSort}" title="Sort by ${escapeHtml(label)}" onclick="${toggleFnName}('${column}')" onkeydown="activateOnEnterOrSpace(event)">${label} <span class="sort-indicator" aria-hidden="true">${indicator}</span></th>`;
 }
 
 function formatSupabaseError(error, fallbackMessage) {
-    if (!error) return fallbackMessage || 'Error desconocido';
+    if (!error) return fallbackMessage || 'Unknown error';
 
     const parts = [error.message, error.details, error.hint]
         .filter(Boolean)
@@ -505,16 +513,12 @@ function formatSupabaseError(error, fallbackMessage) {
         .filter(Boolean);
 
     if (parts.length > 0) return parts.join(' | ');
-    return fallbackMessage || 'Error desconocido';
+    return fallbackMessage || 'Unknown error';
 }
 
 function getStatusIcon(status) {
-    switch (status) {
-        case 'Verde': return '✅';
-        case 'Ámbar': return '⚠️';
-        case 'Rojo': return '🚫';
-        default: return '✅';
-    }
+    // Minimalist status glyph; colour is applied by CSS via the status-* class.
+    return '●';
 }
 
 function renderPhaseOptions(selectedPhase) {
@@ -537,14 +541,26 @@ function syncPhaseSelectors() {
 function getStatusText(status) {
     switch (status) {
         case 'Verde':
-            return 'On Time';
+            return 'On Track';
         case 'Ámbar':
-            return 'Riesgo';
+            return 'At Risk';
         case 'Rojo':
-            return 'Bloqueo';
+            return 'Blocked';
         default:
             return status || '-';
     }
+}
+
+// Priority/impact are stored in Spanish for data compatibility; display in English.
+function getPriorityLabel(value) {
+    return { Baja: 'Low', Media: 'Medium', Alta: 'High', 'Crítica': 'Critical' }[value] || value || 'Medium';
+}
+function getImpactLabel(value) {
+    return { Bajo: 'Low', Medio: 'Medium', Alto: 'High' }[value] || value || 'Medium';
+}
+// Urgency is stored in Spanish (Normal/Alta/Máxima) for logic compatibility; display in English.
+function getUrgencyLabel(value) {
+    return { Normal: 'Normal', Alta: 'High', 'Máxima': 'Critical' }[value] || value || 'Normal';
 }
 
 function toggleIndicatorDropdown(event, type) {
@@ -577,33 +593,99 @@ async function updateIndicator(event, projectId, field, value) {
 }
 
 
-        const madridHolidaysByYear = {
-            2025: [
-                '2025-01-01', '2025-01-06',
-                '2025-04-17', '2025-04-18',
-                '2025-05-01', '2025-05-02',
-                '2025-07-25', '2025-08-15',
-                '2025-10-12', '2025-11-01', '2025-11-09',
-                '2025-12-06', '2025-12-08', '2025-12-25'
-            ],
-            2026: [
-                '2026-01-01', '2026-01-06',
-                '2026-04-02', '2026-04-03',
-                '2026-05-01', '2026-05-02', '2026-05-15',
-                '2026-08-15',
-                '2026-10-12', '2026-11-02', '2026-11-09',
-                '2026-12-08', '2026-12-25'
-            ],
-            2027: [
-                '2027-01-01', '2027-01-06',
-                '2027-03-25', '2027-03-26',
-                '2027-05-01',
-                '2027-10-12',
-                '2027-11-01',
-                '2027-12-06', '2027-12-08', '2027-12-25'
-            ]
+        // Public holidays per country. Each team member follows the calendar of
+        // their country (see MEMBER_COUNTRY). Holidays are marked in the Daily and
+        // Team calendars but NEVER count as vacation days.
+        const HOLIDAYS_BY_COUNTRY = {
+            // Spain (national + Madrid) — owners: TB, AR, JG
+            ES: {
+                2025: [
+                    '2025-01-01', '2025-01-06', '2025-04-17', '2025-04-18',
+                    '2025-05-01', '2025-05-02', '2025-07-25', '2025-08-15',
+                    '2025-10-12', '2025-11-01', '2025-11-09', '2025-12-06',
+                    '2025-12-08', '2025-12-25'
+                ],
+                2026: [
+                    '2026-01-01', '2026-01-06', '2026-04-02', '2026-04-03',
+                    '2026-05-01', '2026-05-02', '2026-05-15', '2026-08-15',
+                    '2026-10-12', '2026-11-02', '2026-11-09', '2026-12-08',
+                    '2026-12-25'
+                ],
+                2027: [
+                    '2027-01-01', '2027-01-06', '2027-03-25', '2027-03-26',
+                    '2027-05-01', '2027-10-12', '2027-11-01', '2027-12-06',
+                    '2027-12-08', '2027-12-25'
+                ]
+            },
+            // Portugal (national) — owner: IM
+            PT: {
+                2025: [
+                    '2025-01-01', '2025-04-18', '2025-04-20', '2025-04-25',
+                    '2025-05-01', '2025-06-10', '2025-06-19', '2025-08-15',
+                    '2025-10-05', '2025-11-01', '2025-12-01', '2025-12-08',
+                    '2025-12-25'
+                ],
+                2026: [
+                    '2026-01-01', '2026-04-03', '2026-04-05', '2026-04-25',
+                    '2026-05-01', '2026-06-04', '2026-06-10', '2026-08-15',
+                    '2026-10-05', '2026-11-01', '2026-12-01', '2026-12-08',
+                    '2026-12-25'
+                ],
+                2027: [
+                    '2027-01-01', '2027-03-26', '2027-03-28', '2027-04-25',
+                    '2027-05-01', '2027-05-27', '2027-06-10', '2027-08-15',
+                    '2027-10-05', '2027-11-01', '2027-12-01', '2027-12-08',
+                    '2027-12-25'
+                ]
+            },
+            // India (Mumbai / Maharashtra) — owner: AD. Fixed-date national holidays;
+            // movable festival dates to be validated when AD joins the active roster.
+            IN: {
+                2025: [
+                    '2025-01-26', '2025-03-14', '2025-08-15', '2025-08-27',
+                    '2025-10-02', '2025-10-21', '2025-12-25'
+                ],
+                2026: [
+                    '2026-01-26', '2026-03-04', '2026-08-15', '2026-09-14',
+                    '2026-10-02', '2026-11-08', '2026-12-25'
+                ],
+                2027: [
+                    '2027-01-26', '2027-08-15', '2027-10-02', '2027-12-25'
+                ]
+            }
         };
-        const madridHolidays = new Set(Object.values(madridHolidaysByYear).flat());
+
+        // Which country calendar each team member follows.
+        const MEMBER_COUNTRY = { TB: 'ES', AR: 'ES', JG: 'ES', IM: 'PT', AD: 'IN' };
+        const COUNTRY_LABEL = { ES: 'Spain', PT: 'Portugal', IN: 'India' };
+
+        function getMemberCountry(initials) {
+            return MEMBER_COUNTRY[(initials || '').trim().toUpperCase()] || 'ES';
+        }
+
+        // Cache of flattened holiday Sets per country.
+        const _holidaySetCache = {};
+        function getHolidaySetForCountry(country) {
+            if (!_holidaySetCache[country]) {
+                const byYear = HOLIDAYS_BY_COUNTRY[country] || {};
+                _holidaySetCache[country] = new Set(Object.values(byYear).flat());
+            }
+            return _holidaySetCache[country];
+        }
+
+        function isHolidayForMember(initials, dateKey) {
+            return getHolidaySetForCountry(getMemberCountry(initials)).has(dateKey);
+        }
+
+        // Country codes that have a holiday on a given date among the active team.
+        function teamHolidayCountriesOnDate(dateKey) {
+            const countries = new Set(teamMembers.map(getMemberCountry));
+            return Array.from(countries).filter(c => getHolidaySetForCountry(c).has(dateKey));
+        }
+
+        function isHolidayForAnyTeamMember(dateKey) {
+            return teamHolidayCountriesOnDate(dateKey).length > 0;
+        }
 
         let projects = [];
         let dailyComments = [];
@@ -622,7 +704,7 @@ async function updateIndicator(event, projectId, field, value) {
             { w: 16, font: 8,   hdrH: 24 },   // medium:  números más grandes
             { w: 28, font: 10,  hdrH: 30 },   // detail:  números claramente legibles
         ];
-        const teamMembers = ['IS', 'HR', 'PU', 'AR', 'MR', 'AP']; // Ajusta según tu equipo
+        const teamMembers = ['TB', 'AR', 'JG', 'IM']; // WE AI Implementation Analysts
         const excludedResponsibles = ['DH'];
 
         function isExcludedResponsible(value) {
@@ -675,7 +757,7 @@ async function updateIndicator(event, projectId, field, value) {
 
             const previousValue = (responsibleSelect.value || '').trim().toUpperCase();
 
-            responsibleSelect.innerHTML = '<option value="">Sin responsable</option>' +
+            responsibleSelect.innerHTML = '<option value="">No owner</option>' +
                 teamMembers.map(member => `<option value="${member}">${member}</option>`).join('');
 
             if (previousValue) {
@@ -700,11 +782,34 @@ async function updateIndicator(event, projectId, field, value) {
     prioridades: [],
     impactos: [],
     estados: [],
+    owners: [],
+    countries: [],
     fechaInicioDesde: '',
     fechaInicioHasta: '',
     fechaFinDesde: '',
     fechaFinHasta: ''
 };
+
+// Which dashboard filter dropdown is currently open (null = none), mirrors
+// the dailyResponsibleDropdownOpen pattern since renderDashboard() does a
+// full innerHTML replace on every filter change.
+let openDashFilterMenu = null;
+
+function toggleDashFilterMenu(event, key) {
+    event.stopPropagation();
+    openDashFilterMenu = (openDashFilterMenu === key) ? null : key;
+    renderDashboard();
+    if (openDashFilterMenu) {
+        setTimeout(() => document.addEventListener('click', closeDashFilterMenuOnOutsideClick), 0);
+    }
+}
+
+function closeDashFilterMenuOnOutsideClick(event) {
+    if (event.target.closest('.dash-filter-dropdown')) return;
+    openDashFilterMenu = null;
+    document.removeEventListener('click', closeDashFilterMenuOnOutsideClick);
+    renderDashboard();
+}
 
 let dashboardSort = {
     column: null,
@@ -788,29 +893,79 @@ function setDashboardFilter(field, value) {
             return dates;
         }
 
+        // Daily range: 'week' (Mon–Fri) or 'month' (all working days of the month).
+        let dailyRange = 'week';
+
+        function getDailyDates() {
+            if (dailyRange === 'month') {
+                const y = currentWeekStart.getFullYear();
+                const m = currentWeekStart.getMonth();
+                const daysInMonth = new Date(y, m + 1, 0).getDate();
+                const days = [];
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const dt = new Date(y, m, d);
+                    const dow = dt.getDay();
+                    if (dow >= 1 && dow <= 5) days.push(dt); // working days only
+                }
+                return days;
+            }
+            return getWeekDates(currentWeekStart);
+        }
+
+        function setDailyRange(range) {
+            if (!['week', 'month'].includes(range)) return;
+            dailyRange = range;
+            const t = new Date();
+            if (range === 'month') {
+                currentWeekStart = new Date(t.getFullYear(), t.getMonth(), 1);
+            } else {
+                currentWeekStart = getMonday(t);
+            }
+            const weekBtn = document.getElementById('btnDailyWeek');
+            const monthBtn = document.getElementById('btnDailyMonth');
+            if (weekBtn) { weekBtn.classList.toggle('active', range === 'week'); weekBtn.setAttribute('aria-pressed', String(range === 'week')); }
+            if (monthBtn) { monthBtn.classList.toggle('active', range === 'month'); monthBtn.setAttribute('aria-pressed', String(range === 'month')); }
+            renderDaily();
+        }
+
         function previousWeek() {
-            currentWeekStart = new Date(currentWeekStart);
-            currentWeekStart.setDate(currentWeekStart.getDate() - 7);
+            if (dailyRange === 'month') {
+                currentWeekStart = new Date(currentWeekStart.getFullYear(), currentWeekStart.getMonth() - 1, 1);
+            } else {
+                currentWeekStart = new Date(currentWeekStart);
+                currentWeekStart.setDate(currentWeekStart.getDate() - 7);
+            }
             renderDaily();
         }
 
         function nextWeek() {
-            currentWeekStart = new Date(currentWeekStart);
-            currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+            if (dailyRange === 'month') {
+                currentWeekStart = new Date(currentWeekStart.getFullYear(), currentWeekStart.getMonth() + 1, 1);
+            } else {
+                currentWeekStart = new Date(currentWeekStart);
+                currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+            }
             renderDaily();
         }
 
         function goToday() {
-            currentWeekStart = getMonday(new Date());
+            const t = new Date();
+            currentWeekStart = dailyRange === 'month' ? new Date(t.getFullYear(), t.getMonth(), 1) : getMonday(t);
             renderDaily();
         }
 
         function updateWeekInfo() {
+            const el = document.getElementById('weekInfo');
+            if (!el) return;
+            if (dailyRange === 'month') {
+                el.textContent = currentWeekStart.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+                return;
+            }
             const dates = getWeekDates(currentWeekStart);
             if (!dates.length) return;
-            const startStr = dates[0].toLocaleDateString('es-ES');
-            const endStr = dates[dates.length - 1].toLocaleDateString('es-ES');
-            document.getElementById('weekInfo').textContent = `${startStr} - ${endStr}`;
+            const startStr = dates[0].toLocaleDateString('en-GB');
+            const endStr = dates[dates.length - 1].toLocaleDateString('en-GB');
+            el.textContent = `${startStr} - ${endStr}`;
         }
 
         function openNewProjectModal() {
@@ -842,7 +997,7 @@ function setDashboardFilter(field, value) {
             const available = teamMembers.filter(m => !current.includes(m));
             
             if (available.length === 0) {
-                showToast('Todos los responsables ya están asignados', 'info');
+                showToast('All owners are already assigned', 'info');
                 return;
             }
             
@@ -855,10 +1010,10 @@ function setDashboardFilter(field, value) {
             popover.id = popoverId;
             popover.className = 'resp-popover';
             popover.setAttribute('role', 'dialog');
-            popover.setAttribute('aria-label', 'Agregar responsable');
+            popover.setAttribute('aria-label', 'Add owner');
             popover.innerHTML = `
                 <div class="resp-popover-content">
-                    <div class="resp-popover-title">Agregar responsable</div>
+                    <div class="resp-popover-title">Add owner</div>
                     <div class="resp-popover-buttons">
                         ${available.map(resp => `
                             <button type="button" class="resp-popover-btn" onclick="addResponsibleAndClose('${projectId}', '${resp}')">
@@ -866,7 +1021,7 @@ function setDashboardFilter(field, value) {
                             </button>
                         `).join('')}
                     </div>
-                    <button type="button" class="resp-popover-close" aria-label="Cerrar" onclick="closeResponsiblesPopover('${projectId}')">✕</button>
+                    <button type="button" class="resp-popover-close" aria-label="Close" onclick="closeResponsiblesPopover('${projectId}')">✕</button>
                 </div>
             `;
             
@@ -946,11 +1101,12 @@ function setDashboardFilter(field, value) {
             const fteInput = document.getElementById('fte');
             const phaseInput = document.getElementById('projectPhase');
             const stakeholdersInput = document.getElementById('projectStakeholders');
+            const countryInput = document.getElementById('projectCountry');
 
             // VALIDAR NOMBRE
             const name = nameInput.value.trim();
             if (!name) {
-                showToast('Indica el nombre del proyecto.', 'warning');
+                showToast('Enter the project name.', 'warning');
                 nameInput.focus();
                 return;
             }
@@ -962,6 +1118,7 @@ function setDashboardFilter(field, value) {
             const fte = parseFloat(fteInput.value) || 0;
             const phase = phaseInput.value;
             const stakeholders = stakeholdersInput.value.trim();
+            const country = countryInput ? countryInput.value.trim() : '';
 
             // PRERREQUISITOS ESTÁNDAR
             const prerequisites = (typeof STANDARD_PREREQUISITES !== 'undefined' ? STANDARD_PREREQUISITES : []).map(pName => ({
@@ -971,6 +1128,9 @@ function setDashboardFilter(field, value) {
             }));
 
             // OBJETO PARA SUPABASE
+            // Auto-assign the creator as owner so the project shows up when
+            // filtering the Daily by the logged-in user's initials.
+            const creatorInitials = normalizeInitials(currentUser || '');
             const projectRow = {
                 name: name,
                 start_date: startDate,
@@ -979,10 +1139,12 @@ function setDashboardFilter(field, value) {
                 fte: fte,
                 phase: phase,
                 stakeholders: stakeholders,
+                country: country,
                 status: 'Verde',
                 priority: 'Media',
                 progress: 0,
-                prerequisites: prerequisites
+                prerequisites: prerequisites,
+                responsibles: creatorInitials ? [creatorInitials] : []
             };
 
             // console.log("📤 Creando proyecto:", projectRow);
@@ -996,7 +1158,7 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error("❌ Error:", error);
-                showToast("Error guardando proyecto: " + error.message, 'error');
+                showToast("Error saving project: " + error.message, 'error');
                 return;
             }
 
@@ -1009,7 +1171,8 @@ function setDashboardFilter(field, value) {
             volumeInput.value = '';
             fteInput.value = '';
             stakeholdersInput.value = '';
-            phaseInput.value = 'Idea'; // Resetear al valor por defecto
+            if (countryInput) countryInput.value = '';
+            phaseInput.value = PROJECT_PHASES[0]; // Reset to the default phase
 
             // CERRAR MODAL, RECARGAR DATOS Y ABRIR LA FICHA DEL NUEVO PROYECTO
             closeProjectModal();
@@ -1022,7 +1185,7 @@ function setDashboardFilter(field, value) {
             } else {
                 renderActiveView();
             }
-            showToast('Proyecto creado', 'success');
+            showToast('Project created', 'success');
         }
 
 
@@ -1070,7 +1233,7 @@ function setDashboardFilter(field, value) {
             if (select) {
                 // Conservar la selección: un refresco en tiempo real no debe vaciar el modal abierto
                 const previousSelection = select.value;
-                select.innerHTML = '<option value="">Selecciona un proyecto...</option>';
+                select.innerHTML = '<option value="">Select a project...</option>';
                 projects.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id;
@@ -1227,18 +1390,18 @@ function setDashboardFilter(field, value) {
 
         function getDayHeaderButtonTitle(dateKey) {
             const tasks = getCurrentUserDayPersonalTasksByDate(dateKey);
-            if (!tasks.length) return 'Tareas personales del dia';
+            if (!tasks.length) return 'Personal tasks for the day';
             const pending = tasks.filter(t => !t.completed).length;
-            if (pending > 0) return `${pending} pendiente(s) en tareas personales del dia`;
-            return 'Tareas personales del dia completadas';
+            if (pending > 0) return `${pending} pending in personal tasks for the day`;
+            return 'Personal tasks for the day completed';
         }
 
         function formatDayPersonalModalTitle(dateKey) {
             const dateObj = parseDateKeyToDate(dateKey);
-            if (!dateObj) return 'Tareas personales del dia';
-            const weekday = dateObj.toLocaleDateString('es-ES', { weekday: 'long' });
+            if (!dateObj) return 'Personal tasks for the day';
+            const weekday = dateObj.toLocaleDateString('en-GB', { weekday: 'long' });
             const niceWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
-            const niceDate = dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            const niceDate = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
             return `${niceWeekday} ${niceDate}`;
         }
 
@@ -1287,7 +1450,7 @@ function setDashboardFilter(field, value) {
                 });
 
             if (!tasks.length) {
-                listEl.innerHTML = '<div class="empty-state empty-state--compact">No hay tareas personales para este dia.</div>';
+                listEl.innerHTML = '<div class="empty-state empty-state--compact">No personal tasks for this day.</div>';
                 return;
             }
 
@@ -1299,7 +1462,7 @@ function setDashboardFilter(field, value) {
                         <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleDayPersonalTask('${task.id}', this.checked)">
                         <span>${escapeHtml(task.text)}</span>
                     </label>
-                    <button type="button" class="day-personal-delete" onclick="deleteDayPersonalTask('${task.id}')" title="Borrar tarea" aria-label="Borrar tarea: ${escapeHtml(task.text)}">×</button>
+                    <button type="button" class="day-personal-delete" onclick="deleteDayPersonalTask('${task.id}')" title="Delete task" aria-label="Delete task: ${escapeHtml(task.text)}">×</button>
                 </div>`;
             });
             html += '</div>';
@@ -1330,7 +1493,7 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error(error);
-                showToast('Error guardando tarea personal del dia', 'error');
+                showToast('Error saving personal task for the day', 'error');
                 return;
             }
 
@@ -1350,7 +1513,7 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error(error);
-                showToast('Error actualizando tarea personal del dia', 'error');
+                showToast('Error updating personal task for the day', 'error');
                 return;
             }
 
@@ -1360,7 +1523,7 @@ function setDashboardFilter(field, value) {
         }
 
         async function deleteDayPersonalTask(taskId) {
-            const confirmed = confirm('¿Borrar esta tarea personal del dia?');
+            const confirmed = confirm('Delete this personal task for the day?');
             if (!confirmed) return;
 
             const owner = normalizeInitials(currentUser || 'US');
@@ -1372,7 +1535,7 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error(error);
-                showToast('Error borrando tarea personal del dia', 'error');
+                showToast('Error deleting personal task for the day', 'error');
                 return;
             }
 
@@ -1386,16 +1549,17 @@ function setDashboardFilter(field, value) {
             if (!projects.length) {
                 const filterContainer = document.getElementById('dailyRespFilter');
                 if (filterContainer) filterContainer.innerHTML = '';
-                document.getElementById('dailyTableContainer').innerHTML = '<div class="empty-state">Crea un proyecto para empezar a usar la daily.</div>';
+                document.getElementById('dailyTableContainer').innerHTML = '<div class="empty-state">Create a project to start using the daily.</div>';
                 return;
             }
 
             updateWeekInfo();
-            const weekDates = getWeekDates(currentWeekStart);
+            const weekDates = getDailyDates();
+            const dailyColspan = weekDates.length + 3;
             const todayKey = formatDateKey(new Date());
 
             const estadosUnicos = Array.from(
-                new Set(projects.map(p => p.phase || 'Sin fase'))
+                new Set(projects.map(p => p.phase || 'No phase'))
             ).filter(x => x);
 
             // Aplicar filtros
@@ -1411,7 +1575,7 @@ function setDashboardFilter(field, value) {
 
                 if (dailyFilters.estados && dailyFilters.estados.length > 0) {
                     result = result.filter(
-                        p => dailyFilters.estados.includes(p.phase || 'Sin fase')
+                        p => dailyFilters.estados.includes(p.phase || 'No phase')
                     );
                 }
 
@@ -1447,7 +1611,7 @@ function setDashboardFilter(field, value) {
             if (bauTabButton) {
                 const bauWithIncidents = bauProjects.filter(p => countOpenIncidents(p.id) > 0).length;
                 bauTabButton.innerHTML = bauWithIncidents
-                    ? `BAU <span class="daily-mode-badge" title="${bauWithIncidents} con incidencias abiertas">⚠ ${bauWithIncidents}</span>`
+                    ? `BAU <span class="daily-mode-badge" title="${bauWithIncidents} open incident(s)">${bauWithIncidents}</span>`
                     : 'BAU';
             }
 
@@ -1468,7 +1632,7 @@ function setDashboardFilter(field, value) {
                     filterContainer.innerHTML = '';
                 } else {
                     const selectedCount = dailyFilters.responsibles.length;
-                    const selectedLabel = selectedCount > 0 ? `Responsables (${selectedCount})` : 'Responsables: todos';
+                    const selectedLabel = selectedCount > 0 ? `Owners (${selectedCount})` : 'Owners: all';
                     filterContainer.innerHTML = `
                         <div class="daily-resp-filter">
                             <button type="button" class="daily-resp-trigger${selectedCount ? ' is-filtered' : ''}"
@@ -1479,8 +1643,8 @@ function setDashboardFilter(field, value) {
                             </button>
                             <div class="daily-resp-menu" id="dailyResponsibleOptions" ${dailyResponsibleDropdownOpen ? '' : 'hidden'} onclick="event.stopPropagation()">
                                 <div class="daily-resp-menu-header">
-                                    <span>Filtrar por responsable</span>
-                                    ${selectedCount ? '<button type="button" class="daily-resp-clear" onclick="clearDailyResponsibleFilter(event)">Limpiar</button>' : ''}
+                                    <span>Filter by owner</span>
+                                    ${selectedCount ? '<button type="button" class="daily-resp-clear" onclick="clearDailyResponsibleFilter(event)">Clear</button>' : ''}
                                 </div>
                                 ${allResponsibles.map(resp => {
                                     const checked = dailyFilters.responsibles.includes(resp) ? 'checked' : '';
@@ -1493,21 +1657,22 @@ function setDashboardFilter(field, value) {
 
             let html = '<table class="daily-table"><thead>';
 
-            const modeLabels = { activos: 'activos', bau: 'en BAU', completados: 'completados' };
-            const tituloTabla = { activos: 'Proyecto (activos)', bau: 'Proyecto (BAU)', completados: 'Proyecto (completados)' }[dailyViewMode];
+            const modeLabels = { activos: 'active', bau: 'in BAU', completados: 'completed' };
+            const tituloTabla = { activos: 'Project (active)', bau: 'Project (BAU)', completados: 'Project (completed)' }[dailyViewMode];
             html += '<tr>' +
                 renderSortableHeader('name', tituloTabla, dailySort, 'toggleDailySort') +
-                renderSortableHeader('status', 'Estado', dailySort, 'toggleDailySort') +
-                renderSortableHeader('startDate', 'Fecha inicio', dailySort, 'toggleDailySort');
+                renderSortableHeader('status', 'Status', dailySort, 'toggleDailySort') +
+                renderSortableHeader('startDate', 'Start date', dailySort, 'toggleDailySort');
 
             weekDates.forEach((date) => {
                 const dateKey = formatDateKey(date);
                 const isToday = dateKey === todayKey;
-                const isHoliday = madridHolidays.has(dateKey);
+                const holidayCountries = teamHolidayCountriesOnDate(dateKey);
+                const isHoliday = holidayCountries.length > 0;
 
-                const dayNameRaw = date.toLocaleDateString('es-ES', { weekday: 'long' });
+                const dayNameRaw = date.toLocaleDateString('en-GB', { weekday: 'long' });
                 const dayName = dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1);
-                const dateStr = date.toLocaleDateString('es-ES', { day: 'numeric', month: 'numeric' });
+                const dateStr = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'numeric' });
 
                 let headerClass = 'day-header';
                 if (isToday) {
@@ -1517,7 +1682,8 @@ function setDashboardFilter(field, value) {
                     headerClass += ' holiday-header';
                 }
 
-                const holidayBadge = isHoliday ? '<span class="holiday-badge">FESTIVO</span>' : '';
+                const holidayTitle = isHoliday ? `Public holiday · ${holidayCountries.map(c => COUNTRY_LABEL[c] || c).join(', ')}` : '';
+                const holidayBadge = isHoliday ? `<span class="holiday-badge" title="${escapeHtml(holidayTitle)}">HOLIDAY</span>` : '';
                 const dayTaskBtnClass = getDayHeaderButtonClass(dateKey);
                 const dayTaskBtnTitle = escapeHtml(getDayHeaderButtonTitle(dateKey));
                 const dayTaskBtn = `<button type="button" class="day-header-task-btn ${dayTaskBtnClass}" title="${dayTaskBtnTitle}" aria-label="${dayTaskBtnTitle} (${dayName} ${dateStr})" onclick="openDayPersonalTasksModal(event, '${dateKey}')">+</button>`;
@@ -1530,23 +1696,23 @@ function setDashboardFilter(field, value) {
             // FILA DE FILTROS (Se dibuja siempre)
             html += '<tr class="filter-row">';
 
-            html += '<th><input class="filter-input" type="text" placeholder="Filtrar..." aria-label="Filtrar por nombre de proyecto" ' +
+            html += '<th><input class="filter-input" type="text" placeholder="Filter..." aria-label="Filter by project name" ' +
                 'value="' + escapeHtml(dailyFilters.proyecto) + '" ' +
                 'oninput="onFilterChange(\'proyecto\', this.value)"></th>';
 
             {
                 const selCount = dailyFilters.estados.length;
                 const allSel = selCount === estadosUnicos.length && selCount > 0;
-                const btnLabel = selCount === 0 ? 'Todos' : selCount === 1 ? dailyFilters.estados[0] : selCount + ' estados';
+                const btnLabel = selCount === 0 ? 'All' : selCount === 1 ? dailyFilters.estados[0] : selCount + ' phases';
                 const hasActive = selCount > 0 ? ' active' : '';
                 let estadoHtml = `<div class="estado-filter-wrapper">
-  <button type="button" class="estado-filter-btn${hasActive}" aria-haspopup="true" aria-expanded="${dailyEstadoDropdownOpen}" aria-label="Filtrar por estado: ${escapeHtml(btnLabel)}" onclick="event.stopPropagation();toggleDailyEstadoDropdown()">${btnLabel} <span class="estado-arrow">&#9660;</span></button>`;
+  <button type="button" class="estado-filter-btn${hasActive}" aria-haspopup="true" aria-expanded="${dailyEstadoDropdownOpen}" aria-label="Filter by phase: ${escapeHtml(btnLabel)}" onclick="event.stopPropagation();toggleDailyEstadoDropdown()">${btnLabel} <span class="estado-arrow">&#9660;</span></button>`;
                 if (dailyEstadoDropdownOpen) {
                     const jsonEstados = JSON.stringify(estadosUnicos).replace(/"/g, '&quot;');
                     estadoHtml += `<div class="estado-filter-dropdown" onclick="event.stopPropagation()">
   <label class="estado-filter-option estado-filter-selectall">
     <input type="checkbox" ${allSel ? 'checked' : ''} onchange="toggleDailyEstadoAll(${jsonEstados})">
-    <span>(Seleccionar todo)</span>
+    <span>(Select all)</span>
   </label>
   <div class="estado-filter-separator"></div>`;
                     estadosUnicos.forEach(est => {
@@ -1559,7 +1725,7 @@ function setDashboardFilter(field, value) {
                 html += '<th class="filter-cell filter-cell--dropdown">' + estadoHtml + '</th>';
             }
 
-            html += '<th><input class="filter-input" type="date" aria-label="Fecha de inicio desde" ' +
+            html += '<th><input class="filter-input" type="date" aria-label="Start date from" ' +
                 'value="' + dailyFilters.fechaInicio + '" ' +
                 'oninput="onFilterChange(\'fechaInicio\', this.value || \'\')"></th>'; // <--- OJO: Asegúrate de manejar el string vacío
 
@@ -1584,12 +1750,12 @@ function setDashboardFilter(field, value) {
                     const selectedClass = project.id === currentProjectId ? 'selected-row' : '';
                     const openIncidents = getProjectGroup(project) === 'bau' ? countOpenIncidents(project.id) : 0;
                     const incidentBadge = openIncidents
-                        ? ` <span class="bau-incident-badge" title="${openIncidents} incidencia(s) abierta(s)">⚠ ${openIncidents}</span>`
+                        ? ` <span class="bau-incident-badge" title="${openIncidents} open incident(s)">${openIncidents}</span>`
                         : '';
                     html += `<tr class="${selectedClass}" onclick="onRowClick('${project.id}')">
-                    <td class="project-name-cell"><button type="button" class="project-name-link" title="Abrir ficha del proyecto" onclick="onProjectNameClick(event, '${project.id}')">${escapeHtml(project.name)}</button>${incidentBadge}</td>
+                    <td class="project-name-cell"><button type="button" class="project-name-link" title="Open project card" onclick="onProjectNameClick(event, '${project.id}')">${escapeHtml(project.name)}</button>${incidentBadge}</td>
                     <td>
-                        <select class="state-select" aria-label="Fase de ${escapeHtml(project.name)}"
+                        <select class="state-select" aria-label="Phase of ${escapeHtml(project.name)}"
                                 onclick="event.stopPropagation()"
                                 onchange="updateProjectPhaseFromDaily(event, '${project.id}')">
                             ${renderPhaseOptions(project.phase)}
@@ -1608,7 +1774,7 @@ function setDashboardFilter(field, value) {
                         const { pendingTeam, pendingPersonal } = commentCountsForCell(topLevelComments);
                         const hasTeamPending = pendingTeam > 0;
                         const hasPersonalPending = pendingPersonal > 0;
-                        const isHoliday = madridHolidays.has(dateKey);
+                        const isHoliday = isHolidayForAnyTeamMember(dateKey);
                         const isToday = dateKey === todayKey;
                         let highlightClass = '';
                         if (hasTeamPending && hasPersonalPending) {
@@ -1629,8 +1795,8 @@ function setDashboardFilter(field, value) {
                             const latest = topLevelComments.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
                             const shortText = latest.text.length > 60 ? latest.text.slice(0, 60) + '…' : latest.text;
                             previewText = escapeHtml(shortText.replace(/\n/g, ' '));
-                            const threadBadge = threadsWithReplies > 0 ? ` · <span class="cell-thread-badge">💬 ${threadsWithReplies}</span>` : '';
-                            metaText = `${topLevelComments.length} comentario(s) · ${escapeHtml(latest.urgency)}${latest.hasIncident ? ' · INCIDENCIA' : ''}${threadBadge}`;
+                            const threadBadge = threadsWithReplies > 0 ? ` · <span class="cell-thread-badge">${threadsWithReplies}</span>` : '';
+                            metaText = `${topLevelComments.length} comment(s) · ${escapeHtml(getUrgencyLabel(latest.urgency))}${latest.hasIncident ? ' · INCIDENT' : ''}${threadBadge}`;
                         }
 
                         html += `<td class="${cellClass}">
@@ -1638,8 +1804,8 @@ function setDashboardFilter(field, value) {
                             <div class="daily-cell-preview">${previewText}</div>
                             ${metaText ? `<div class="daily-cell-meta">${metaText}</div>` : ''}
                             <div class="daily-actions">
-                                ${topLevelComments.length > 0 ? `<button type="button" class="daily-action-btn" title="Ver comentarios" aria-label="Ver comentarios de ${escapeHtml(project.name)} el ${dateKey}" onclick="openCommentsList(event, '${project.id}', '${dateKey}')">Ver</button>` : ''}
-                                <button type="button" class="daily-action-btn daily-action-btn--add" title="Añadir comentario" aria-label="Añadir comentario a ${escapeHtml(project.name)} el ${dateKey}" onclick="openDailyCommentModalFromCell(event, '${project.id}', '${dateKey}')">+</button>
+                                ${topLevelComments.length > 0 ? `<button type="button" class="daily-action-btn" title="View comments" aria-label="View comments for ${escapeHtml(project.name)} on ${dateKey}" onclick="openCommentsList(event, '${project.id}', '${dateKey}')">View</button>` : ''}
+                                <button type="button" class="daily-action-btn daily-action-btn--add" title="Add comment" aria-label="Add comment to ${escapeHtml(project.name)} on ${dateKey}" onclick="openDailyCommentModalFromCell(event, '${project.id}', '${dateKey}')">+</button>
                             </div>
                         </div>
                     </td>`;
@@ -1648,11 +1814,11 @@ function setDashboardFilter(field, value) {
                     html += '</tr>';
             };
 
-            // Colspan: 3 columnas fijas + 5 días de la semana = 8
+            // Colspan: 3 fixed columns + N day columns
             if (!filteredProjects.length) {
                 html += `<tr>
-                        <td colspan="8" class="table-empty">
-                            No hay proyectos ${modeLabels[dailyViewMode]} que cumplan los filtros seleccionados.
+                        <td colspan="${dailyColspan}" class="table-empty">
+                            No ${modeLabels[dailyViewMode]} projects match the selected filters.
                         </td>
                      </tr>`;
             } else {
@@ -1661,9 +1827,9 @@ function setDashboardFilter(field, value) {
 
             if (bauActivityProjects.length) {
                 html += `<tr class="daily-group-row">
-                        <td colspan="8">
+                        <td colspan="${dailyColspan}">
                             <button type="button" class="daily-group-toggle" aria-expanded="${!dailyBauGroupCollapsed}" onclick="toggleDailyBauGroup()">
-                                <span class="section-toggle-icon" data-collapsed="${dailyBauGroupCollapsed}" aria-hidden="true"></span>BAU con actividad (${bauActivityProjects.length})
+                                <span class="section-toggle-icon" data-collapsed="${dailyBauGroupCollapsed}" aria-hidden="true"></span>BAU with activity (${bauActivityProjects.length})
                             </button>
                         </td>
                      </tr>`;
@@ -1807,12 +1973,12 @@ function setDashboardFilter(field, value) {
 
         function openDailyCommentModal(dateKey, projectIdOverride = null) {
             openModal('dailyModal', '#commentText');
-            document.getElementById('dailyModalTitle').textContent = editingCommentId ? 'Editar comentario Daily' : 'Nuevo comentario Daily';
+            document.getElementById('dailyModalTitle').textContent = editingCommentId ? 'Edit daily comment' : 'New daily comment';
 
             syncTeamMembersInSelectors();
 
             const select = document.getElementById('commentProjectSelect');
-            select.innerHTML = '<option value="">Selecciona un proyecto...</option>';
+            select.innerHTML = '<option value="">Select a project...</option>';
             projects.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p.id;
@@ -1852,7 +2018,7 @@ function setDashboardFilter(field, value) {
                 const owner = normalizeInitials(currentUser || '');
                 responsibleSelect.value = owner;
                 responsibleSelect.setAttribute('disabled', 'disabled');
-                responsibleSelect.title = 'En tareas personales, el responsable es el creador';
+                responsibleSelect.title = 'For personal tasks, the owner is the creator';
             } else {
                 responsibleSelect.removeAttribute('disabled');
                 responsibleSelect.title = '';
@@ -1890,7 +2056,7 @@ function setDashboardFilter(field, value) {
             // console.log('Guardando comentario...', { projectId, text, editingCommentId });
 
             if (!projectId || !text) {
-                showToast('Por favor, completa los campos obligatorios.', 'warning');
+                showToast('Please complete the required fields.', 'warning');
                 return;
             }
 
@@ -1925,13 +2091,13 @@ function setDashboardFilter(field, value) {
 
                 if (error) {
                     console.error(error);
-                    showToast('Error actualizando comentario', 'error');
+                    showToast('Error updating comment', 'error');
                     return;
                 }
 
                 if (!data || data.length === 0) {
-                    console.error('UPDATE no afectó ninguna fila');
-                    showToast('No se encontró el comentario para actualizar', 'error');
+                    console.error('UPDATE did not affect any row');
+                    showToast('The comment to update was not found', 'error');
                     return;
                 }
             } else {
@@ -1955,15 +2121,15 @@ function setDashboardFilter(field, value) {
 
                 if (error) {
                     console.error(error);
-                    showToast('Error guardando comentario', 'error');
+                    showToast('Error saving comment', 'error');
                     return;
                 }
             }
 
             if (urgency === 'Máxima') {
-                showToast(`Comentario guardado con urgencia máxima${responsible ? ` para ${responsible}` : ''}`, 'warning');
+                showToast(`Comment saved with critical urgency${responsible ? ` for ${responsible}` : ''}`, 'warning');
             } else {
-                showToast(wasEditing ? 'Comentario actualizado' : 'Comentario guardado', 'success');
+                showToast(wasEditing ? 'Comment updated' : 'Comment saved', 'success');
             }
 
             closeDailyModal();
@@ -2005,7 +2171,7 @@ function setDashboardFilter(field, value) {
 
             const dateObj = normalizedInput ? new Date(normalizedInput) : null;
             if (dateObj && !Number.isNaN(dateObj.getTime())) {
-                const parts = new Intl.DateTimeFormat('es-ES', {
+                const parts = new Intl.DateTimeFormat('en-GB', {
                     timeZone: 'Europe/Madrid',
                     day: '2-digit',
                     month: '2-digit',
@@ -2056,7 +2222,7 @@ function setDashboardFilter(field, value) {
 
             const container = document.getElementById('commentsListContainer');
             if (topLevel.length === 0) {
-                container.innerHTML = '<div class="empty-state empty-state--compact">Sin comentarios para este día.</div>';
+                container.innerHTML = '<div class="empty-state empty-state--compact">No comments for this day.</div>';
                 return;
             }
 
@@ -2074,40 +2240,40 @@ function setDashboardFilter(field, value) {
                 const formattedDate = `${dd}/${mm}/${yy}`;
 
                 const completedClass = c.completed ? 'completed' : '';
-                const completedBadge = c.completed ? '<span class="completion-badge">✓ COMPLETADA</span>' : '';
-                const personalBadge = c.isPersonal ? '<span class="completion-badge completion-badge--private">PRIVADA</span>' : '';
+                const completedBadge = c.completed ? '<span class="completion-badge">✓ COMPLETED</span>' : '';
+                const personalBadge = c.isPersonal ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : '';
 
                 html += `<div class="comment-entry ${completedClass}">
                 <div class="comment-checkbox-wrapper">
                     <input type="checkbox" class="comment-checkbox"
                            ${c.completed ? 'checked' : ''}
-                           aria-label="Marcar como completado"
+                           aria-label="Mark as completed"
                            onclick="toggleCommentCompletion(event, '${c.id}')">
                     <div class="comment-main">
                         <div class="comment-header">${formattedDate} [${escapeHtml(c.userName || "ND")}]${completedBadge}${personalBadge}</div>
-                        <div class="comment-meta">Resp: [${escapeHtml(c.responsible || 'ND')}]</div>
+                        <div class="comment-meta">Owner: [${escapeHtml(c.responsible || 'ND')}]</div>
                         <div class="comment-text">${escapeHtml(c.text).replace(/\n/g, '<br>')}</div>
                     </div>
                 </div>
                 <div class="comment-actions">
-                    <button type="button" class="comment-action-btn comment-reply-btn" onclick="toggleReplyForm('${c.id}')">↩ Responder</button>
-                    <button type="button" class="comment-action-btn" onclick="editComment('${c.id}')">✏️ Editar</button>
-                    <button type="button" class="comment-action-btn comment-action-btn--danger" onclick="deleteComment('${c.id}')">🗑️ Borrar</button>
+                    <button type="button" class="comment-action-btn comment-reply-btn" onclick="toggleReplyForm('${c.id}')">↩ Reply</button>
+                    <button type="button" class="comment-action-btn" onclick="editComment('${c.id}')">✏️ Edit</button>
+                    <button type="button" class="comment-action-btn comment-action-btn--danger" onclick="deleteComment('${c.id}')">🗑️ Delete</button>
                 </div>`;
 
                 if (hasReplies) {
                     html += `<div class="comment-thread-footer">
-                    <button type="button" class="comment-action-btn comment-thread-btn" aria-expanded="${isExpanded}" onclick="toggleCommentThread('${c.id}')">💬 ${replies.length} ${replies.length === 1 ? 'respuesta' : 'respuestas'} ${isExpanded ? '▲' : '▼'}</button>
+                    <button type="button" class="comment-action-btn comment-thread-btn" aria-expanded="${isExpanded}" onclick="toggleCommentThread('${c.id}')">💬 ${replies.length} ${replies.length === 1 ? 'reply' : 'replies'} ${isExpanded ? '▲' : '▼'}</button>
                 </div>`;
                 }
 
                 if (isReplying) {
                     html += `<div class="reply-form">
-                    <textarea class="reply-textarea" aria-label="Respuesta" id="replyText_${c.id}" placeholder="Escribe tu respuesta..." rows="2"></textarea>
+                    <textarea class="reply-textarea" aria-label="Reply" id="replyText_${c.id}" placeholder="Write your reply..." rows="2"></textarea>
                     <div class="reply-form-actions">
-                        <button type="button" class="comment-action-btn btn-reply-send" onclick="saveCommentReply('${c.id}', '${projectId}', '${dateKey}')">Enviar</button>
-                        <button type="button" class="comment-action-btn btn-reply-send-mail" onclick="saveCommentReply('${c.id}', '${projectId}', '${dateKey}', true)">Enviar y mail</button>
-                        <button type="button" class="comment-action-btn" onclick="cancelReplyForm()">Cancelar</button>
+                        <button type="button" class="comment-action-btn btn-reply-send" onclick="saveCommentReply('${c.id}', '${projectId}', '${dateKey}')">Send</button>
+                        <button type="button" class="comment-action-btn btn-reply-send-mail" onclick="saveCommentReply('${c.id}', '${projectId}', '${dateKey}', true)">Send and email</button>
+                        <button type="button" class="comment-action-btn" onclick="cancelReplyForm()">Cancel</button>
                     </div>
                 </div>`;
                 }
@@ -2123,7 +2289,7 @@ function setDashboardFilter(field, value) {
                         <div class="reply-body">
                             <div class="reply-header">${rDate} ${rTime} · <strong>${escapeHtml(r.userName || 'ND')}</strong></div>
                             <div class="reply-text">${escapeHtml(r.text).replace(/\n/g, '<br>')}</div>
-                            <button type="button" class="comment-action-btn reply-delete-btn" title="Borrar respuesta" aria-label="Borrar respuesta" onclick="deleteComment('${r.id}')">🗑️</button>
+                            <button type="button" class="comment-action-btn reply-delete-btn" title="Delete reply" aria-label="Delete reply" onclick="deleteComment('${r.id}')">🗑️</button>
                         </div>
                     </div>`;
                     });
@@ -2184,7 +2350,7 @@ function setDashboardFilter(field, value) {
 
         function notifyCommentAuthorByEmail(parentComment, replyText, projectId, dateKey) {
             if (!parentComment) {
-                showToast('No se pudo identificar el comentario original para enviar el email.', 'error');
+                showToast('Could not identify the original comment to send the email.', 'error');
                 return;
             }
 
@@ -2192,23 +2358,23 @@ function setDashboardFilter(field, value) {
             const recipientEmail = getUserEmailByInitials(authorInitials);
 
             if (!recipientEmail) {
-                showToast(`No hay email configurado para ${authorInitials || 'el autor original'}.`, 'warning');
+                showToast(`No email configured for ${authorInitials || 'the original author'}.`, 'warning');
                 return;
             }
 
             const parentText = (parentComment.text || '').trim();
-            const subject = '[Gestor Proyectos] Nueva respuesta a comentario';
+            const subject = '[Project Manager] New reply to comment';
             const body = [
-                'Comentario original:',
-                parentText || '(sin texto)',
+                'Original comment:',
+                parentText || '(no text)',
                 '',
-                'Respuesta:',
+                'Reply:',
                 replyText
             ].join('\n');
 
             const opened = openCorporateEmailDraft(recipientEmail, subject, body);
             if (!opened) {
-                showToast('No se pudo abrir el cliente de correo.', 'error');
+                showToast('Could not open the email client.', 'error');
             }
         }
 
@@ -2223,7 +2389,7 @@ function setDashboardFilter(field, value) {
             }
             const parentComment = dailyComments.find(c => c.id === parentId) || null;
             if (!canCurrentUserViewComment(parentComment)) {
-                showToast('No tienes permisos para responder este comentario.', 'warning');
+                showToast('You do not have permission to reply to this comment.', 'warning');
                 return false;
             }
 
@@ -2249,7 +2415,7 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error(error);
-                showToast('Error guardando la respuesta', 'error');
+                showToast('Error saving the reply', 'error');
                 return false;
             }
 
@@ -2260,7 +2426,7 @@ function setDashboardFilter(field, value) {
             activeReplyCommentId = null;
             expandedCommentThreads.add(parentId);
             await loadDataFromSupabase(true);
-            showToast('Respuesta guardada', 'success');
+            showToast('Reply saved', 'success');
             return true;
         }
 
@@ -2313,7 +2479,7 @@ function setDashboardFilter(field, value) {
             const comment = dailyComments.find(c => c.id === commentId);
             if (!comment) return false;
             if (!canCurrentUserManageComment(comment)) {
-                showToast('No tienes permisos para modificar este comentario.', 'warning');
+                showToast('You do not have permission to modify this comment.', 'warning');
                 return false;
             }
 
@@ -2325,7 +2491,7 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error(error);
-                showToast('Error actualizando el estado del comentario', 'error');
+                showToast('Error updating the comment status', 'error');
                 return false;
             }
 
@@ -2373,7 +2539,7 @@ function setDashboardFilter(field, value) {
                 return;
             }
             if (!canCurrentUserManageComment(comment)) {
-                showToast('No tienes permisos para editar este comentario.', 'warning');
+                showToast('You do not have permission to edit this comment.', 'warning');
                 return;
             }
             // console.log('Comentario encontrado:', comment);
@@ -2385,12 +2551,12 @@ function setDashboardFilter(field, value) {
         async function deleteComment(commentId) {
             const comment = dailyComments.find(c => c.id === commentId);
             if (comment && !canCurrentUserManageComment(comment)) {
-                showToast('No tienes permisos para borrar este comentario.', 'warning');
+                showToast('You do not have permission to delete this comment.', 'warning');
                 return;
             }
 
             const isReply = !!(comment && comment.parentId);
-            const confirmed = confirm(isReply ? '¿Borrar esta respuesta?' : '¿Seguro que quieres borrar este comentario?');
+            const confirmed = confirm(isReply ? 'Delete this reply?' : 'Are you sure you want to delete this comment?');
             if (!confirmed) return;
 
             const { projectId, dateKey } = commentsListContext;
@@ -2402,13 +2568,13 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error(error);
-                showToast('Error borrando comentario', 'error');
+                showToast('Error deleting comment', 'error');
                 return;
             }
 
             await loadDataFromSupabase(true);
             renderActiveView();
-            showToast('Comentario borrado', 'success');
+            showToast('Comment deleted', 'success');
 
             if (projectId && dateKey) {
                 openCommentsList(new Event('click'), projectId, dateKey);
@@ -2453,6 +2619,14 @@ function setDashboardFilter(field, value) {
                 case 'stakeholders':
                     update.stakeholders = value;
                     project.stakeholders = value;
+                    break;
+                case 'description':
+                    update.description = value;
+                    project.description = value;
+                    break;
+                case 'country':
+                    update.country = value;
+                    project.country = value;
                     break;
                 case 'benefits':
                     update.benefits = value;
@@ -2504,9 +2678,9 @@ function setDashboardFilter(field, value) {
 
             if (error) {
                 console.error('Error updating project field:', error);
-                showToast('Error al guardar el campo ' + field, 'error');
+                showToast('Error saving the field ' + field, 'error');
             } else {
-                showToast('Cambios guardados', 'success', { key: 'autosave', duration: 1500 });
+                showToast('Changes saved', 'success', { key: 'autosave', duration: 1500 });
             }
         }
 
@@ -2517,10 +2691,19 @@ function setDashboardFilter(field, value) {
     if (progress < 0) progress = 0;
     if (progress > 100) progress = 100;
 
-    // Llamar a updateProjectField para guardar
+    // Save the progress
     await updateProjectField(projectId, 'progress', progress);
 
-    // Refrescar visualmente
+    // Business rule: reaching 100% automatically marks the project as Completed.
+    const project = projects.find(p => p.id === projectId);
+    if (progress === 100 && project && project.phase !== 'Completed' && project.phase !== 'Cancelled') {
+        project.phase = 'Completed';
+        await updateProjectField(projectId, 'phase', 'Completed');
+        renderProjectsList();
+        showToast('Progress reached 100% — project marked as Completed.', 'success');
+    }
+
+    // Refresh the view
     renderFicha();
 }
 
@@ -2590,8 +2773,6 @@ function renderCapacityWidget() {
     if (!currentProjectId) return '';
 
     const week1Start = new Date(capacityWeekStart);
-    const week2Start = new Date(capacityWeekStart);
-    week2Start.setDate(week2Start.getDate() + 7);
 
     const formatWeek = (date) => {
         const start = new Date(date);
@@ -2600,24 +2781,21 @@ function renderCapacityWidget() {
         return `${start.getDate()}/${start.getMonth() + 1} - ${end.getDate()}/${end.getMonth() + 1}`;
     };
 
-            let html = `<div class='widget-box' id='capacityWidget'>
+            let html = `<div class='widget-box capacity-widget' id='capacityWidget'>
         <div class='widget-header'>
-            <div class="widget-title">💼 Capacidad Semanal</div>
+            <div class="widget-title">Weekly Capacity</div>
         </div>
-        
+
         <div class="capacity-week-nav widget-week-nav">
-            <button type="button" class="widget-nav-btn" onclick="previousCapacityWeek()" aria-label="Semana anterior">◀</button>
+            <button type="button" class="widget-nav-btn" onclick="previousCapacityWeek()" aria-label="Previous week">◀</button>
             <div class="capacity-week-info">${formatWeek(week1Start)}</div>
-            <button type="button" class="widget-nav-btn" onclick="nextCapacityWeek()" aria-label="Semana siguiente">▶</button>
+            <button type="button" class="widget-nav-btn" onclick="nextCapacityWeek()" aria-label="Next week">▶</button>
         </div>
         
         <div class="capacity-weeks-container">`;
 
-            // Semana actual
-            html += renderWeekBlock(week1Start, 'Actual');
-
-            // Semana siguiente
-            html += renderWeekBlock(week2Start, 'Siguiente');
+            // Current week only (navigable via the arrows above)
+            html += renderWeekBlock(week1Start);
 
             html += `</div></div>`;
             return html;
@@ -2627,7 +2805,7 @@ function renderCapacityWidget() {
             const weekKey = formatDateKey(weekStart);
 
             let html = `<div class="capacity-week-block">
-        <div class="capacity-week-label">${label}</div>`;
+        ${label ? `<div class="capacity-week-label">${label}</div>` : ''}`;
 
             teamMembers.forEach(user => {
                 const existing = projectCapacities.find(c =>
@@ -2643,7 +2821,7 @@ function renderCapacityWidget() {
             <div class="capacity-input-wrapper">
                 <input type="number"
                        class="capacity-input"
-                       aria-label="Capacidad de ${user}, semana ${label.toLowerCase()} (%)"
+                       aria-label="Capacity for ${user}, ${label.toLowerCase()} week (%)"
                        value="${value}"
                        min="0"
                        max="100"
@@ -2681,7 +2859,7 @@ function renderCapacityWidget() {
                     .update({ capacity_percent: capacity })
                     .eq('id', projectCapacities[existingIndex].id);
 
-                if (error) { console.error(error); showToast('No se pudo guardar la capacidad', 'error'); }
+                if (error) { console.error(error); showToast('Could not save capacity', 'error'); }
             } else {
                 // Crear
                 const newId = generateId();
@@ -2705,7 +2883,7 @@ function renderCapacityWidget() {
                         capacity_percent: capacity
                     });
 
-                if (error) { console.error(error); showToast('No se pudo guardar la capacidad', 'error'); }
+                if (error) { console.error(error); showToast('Could not save capacity', 'error'); }
             }
 
             renderCapacityWidgetInPlace();
@@ -2721,13 +2899,17 @@ function renderCapacityWidget() {
             renderCapacityWidgetInPlace();
         }
 
+        function replaceWidgetInPlace(id, html) {
+            const existing = document.getElementById(id);
+            if (!existing) return;
+            const tmp = document.createElement('template');
+            tmp.innerHTML = html.trim();
+            const next = tmp.content.firstElementChild;
+            if (next) existing.replaceWith(next);
+        }
+
         function renderCapacityWidgetInPlace() {
-            const existing = document.getElementById('capacityWidget');
-            if (existing) {
-                const parent = existing.parentElement;
-                existing.remove();
-                parent.insertAdjacentHTML('afterbegin', renderCapacityWidget());
-            }
+            replaceWidgetInPlace('capacityWidget', renderCapacityWidget());
         }
 
         // =====================================================
@@ -2745,12 +2927,7 @@ function renderCapacityWidget() {
         }
 
         function renderWeeklyWidgetInPlace() {
-            const existing = document.getElementById('weeklyWidget');
-            if (existing) {
-                const parent = existing.parentElement;
-                existing.remove();
-                parent.insertAdjacentHTML('afterbegin', renderWeeklyWidget());
-            }
+            replaceWidgetInPlace('weeklyWidget', renderWeeklyWidget());
         }
 
         async function addWeeklyTask() {
@@ -2773,7 +2950,7 @@ function renderCapacityWidget() {
                     created_by: currentUser || 'US'
                 });
 
-            if (error) { console.error('Error añadiendo tarea semanal:', error); showToast('No se pudo guardar el cambio', 'error'); return; }
+            if (error) { console.error('Error añadiendo tarea semanal:', error); showToast('Could not save change', 'error'); return; }
             await loadWeeklyTasks();
             renderWeeklyWidgetInPlace();
         }
@@ -2784,19 +2961,19 @@ function renderCapacityWidget() {
                 .update({ done: done })
                 .eq('id', id);
 
-            if (error) { console.error(error); showToast('No se pudo guardar el cambio', 'error'); return; }
+            if (error) { console.error(error); showToast('Could not save change', 'error'); return; }
             await loadWeeklyTasks();
             renderWeeklyWidgetInPlace();
         }
 
         async function deleteWeeklyTask(id) {
-            if (!confirm('¿Eliminar este objetivo semanal?')) return;
+            if (!confirm('Delete this weekly goal?')) return;
             const { error } = await supabaseClient
                 .from('project_weekly_tasks')
                 .delete()
                 .eq('id', id);
 
-            if (error) { console.error(error); showToast('No se pudo guardar el cambio', 'error'); return; }
+            if (error) { console.error(error); showToast('Could not save change', 'error'); return; }
             await loadWeeklyTasks();
             renderWeeklyWidgetInPlace();
         }
@@ -2832,41 +3009,41 @@ function renderCapacityWidget() {
             ${total > 0 ? `<span class="weekly-count-badge">${done}/${total}</span>` : ''}
         </div>
         <div class="weekly-week-nav widget-week-nav">
-            <button type="button" class="widget-nav-btn" onclick="previousWeeklyWeek()" aria-label="Semana anterior">◀</button>
+            <button type="button" class="widget-nav-btn" onclick="previousWeeklyWeek()" aria-label="Previous week">◀</button>
             <div class="weekly-week-info">
-                <span class="weekly-week-num">Sem. ${weekNum}</span>
+                <span class="weekly-week-num">Wk ${weekNum}</span>
                 <span class="weekly-week-dates">${weekLabel}</span>
-                ${isCurrentWeek ? '<span class="week-current-badge">Actual</span>' : ''}
+                ${isCurrentWeek ? '<span class="week-current-badge">Current</span>' : ''}
             </div>
-            <button type="button" class="widget-nav-btn" onclick="nextWeeklyWeek()" aria-label="Semana siguiente">▶</button>
+            <button type="button" class="widget-nav-btn" onclick="nextWeeklyWeek()" aria-label="Next week">▶</button>
         </div>`;
 
             if (total > 0) {
-                html += `<div class="weekly-progress-bar" role="progressbar" aria-label="Objetivos completados" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="weekly-progress-fill" style="width:${pct}%"></div></div>`;
+                html += `<div class="weekly-progress-bar" role="progressbar" aria-label="Completed goals" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="weekly-progress-fill" style="width:${pct}%"></div></div>`;
             }
 
             html += `<div class="weekly-tasks-list">`;
 
             if (!tasks.length) {
-                html += `<div class="empty-state empty-state--compact">Sin objetivos esta semana. Añade el primero abajo.</div>`;
+                html += `<div class="empty-state empty-state--compact">No goals this week. Add the first one below.</div>`;
             } else {
                 tasks.forEach(task => {
                     html += `
                 <div class="weekly-task-item${task.done ? ' task-done' : ''}">
                     <label class="weekly-task-check">
-                        <input type="checkbox" ${task.done ? 'checked' : ''} aria-label="Completado: ${escapeHtml(task.text)}" onchange="toggleWeeklyTask('${task.id}', this.checked)">
+                        <input type="checkbox" ${task.done ? 'checked' : ''} aria-label="Completed: ${escapeHtml(task.text)}" onchange="toggleWeeklyTask('${task.id}', this.checked)">
                     </label>
                     <span class="weekly-task-text">${escapeHtml(task.text)}</span>
-                    <button type="button" class="weekly-task-delete" onclick="deleteWeeklyTask('${task.id}')" title="Eliminar objetivo" aria-label="Eliminar objetivo: ${escapeHtml(task.text)}">×</button>
+                    <button type="button" class="weekly-task-delete" onclick="deleteWeeklyTask('${task.id}')" title="Delete goal" aria-label="Delete goal: ${escapeHtml(task.text)}">×</button>
                 </div>`;
                 });
             }
 
             html += `</div>
         <div class="weekly-add-row">
-            <input type="text" id="weeklyNewTask" class="weekly-new-task-input" placeholder="Nuevo objetivo..." aria-label="Nuevo objetivo semanal"
+            <input type="text" id="weeklyNewTask" class="weekly-new-task-input" placeholder="New goal..." aria-label="New weekly goal"
                 onkeydown="if(event.key==='Enter') addWeeklyTask()">
-            <button type="button" class="weekly-add-btn" onclick="addWeeklyTask()" title="Añadir objetivo" aria-label="Añadir objetivo">+</button>
+            <button type="button" class="weekly-add-btn" onclick="addWeeklyTask()" title="Add goal" aria-label="Add goal">+</button>
         </div>
     </div>`;
 
@@ -2907,7 +3084,7 @@ function renderCapacityWidget() {
         .order('created_at', { ascending: false });
 
     if (error) {
-        console.error('Error cargando notas:', formatSupabaseError(error, 'No se pudieron cargar notas'));
+        console.error('Error loading notes:', formatSupabaseError(error, 'Could not load notes'));
         projectNotes = [];
         return;
     }
@@ -2932,7 +3109,7 @@ function renderCapacityWidget() {
         .order('position', { ascending: true });
 
     if (error) {
-        console.error('Error cargando tareas semanales:', formatSupabaseError(error, 'No se pudieron cargar tareas semanales'));
+        console.error('Error loading weekly tasks:', formatSupabaseError(error, 'Could not load weekly tasks'));
         weeklyTasks = [];
         return;
     }
@@ -2956,7 +3133,7 @@ function renderCapacityWidget() {
         .order('created_at', { ascending: false });
 
     if (error) {
-        console.error('Error cargando incidencias:', formatSupabaseError(error, 'No se pudieron cargar incidencias'));
+        console.error('Error loading incidents:', formatSupabaseError(error, 'Could not load incidents'));
         incidents = [];
         return;
     }
@@ -2979,7 +3156,7 @@ function renderCapacityWidget() {
         .order('created_at', { ascending: true });
 
     if (error) {
-        console.error('Error cargando tareas personales del dia:', formatSupabaseError(error, 'No se pudieron cargar tareas personales del dia'));
+        console.error('Error loading personal tasks for the day:', formatSupabaseError(error, 'Could not load personal tasks for the day'));
         dayPersonalTasks = [];
         return;
     }
@@ -3010,14 +3187,14 @@ function renderLastStatusWidget() {
     let html = `
     <div class="widget-box last-status-widget">
         <div class="widget-header">
-            <div class="widget-title">📢 Último estado</div>
+            <div class="widget-title">Latest Update</div>
         </div>
         
         <div id="status-display-area">`;
 
     if (last) {
     const d = new Date(last.createdAt);
-    const dateStr = d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+    const dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
     
     html += `
     <div class="current-status-highlight">
@@ -3027,17 +3204,17 @@ function renderLastStatusWidget() {
         <div class="status-content">${escapeHtml(last.statusText)}</div>
     </div>`;
     } else {
-        html += `<div class="empty-state empty-state--compact">No hay estados registrados.</div>`;
+        html += `<div class="empty-state empty-state--compact">No updates recorded yet.</div>`;
     }
 
     if (older.length > 0) {
         html += `
-        <div class="status-history-title">Historial anterior</div>
+        <div class="status-history-title">Previous history</div>
         <div class="status-history-container">`;
         
         older.forEach(s => {
             const d = new Date(s.createdAt);  // ← CORREGIDO
-            const dateStr = d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+            const dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
             
             html += `
             <div class="history-item">
@@ -3056,8 +3233,8 @@ function renderLastStatusWidget() {
 
     html += `
         <div class="status-input-area">
-            <textarea id="newStatusTextWidget" placeholder="Escribe una actualización..." aria-label="Nueva actualización de estado"></textarea>
-            <button type="button" class="btn-save-status" onclick="saveProjectStatus()">Publicar</button>
+            <textarea id="newStatusTextWidget" placeholder="Write an update..." aria-label="New status update"></textarea>
+            <button type="button" class="btn-save-status" onclick="saveProjectStatus()">Post</button>
         </div>
     </div>`;
 
@@ -3074,7 +3251,7 @@ function renderLastStatusWidget() {
     const text = textarea ? textarea.value.trim() : '';
     
     if (!text) {
-        showToast('Por favor escribe algo', 'warning');
+        showToast('Please write something', 'warning');
         return;
     }
 
@@ -3092,7 +3269,7 @@ function renderLastStatusWidget() {
         
     if (error) {
         console.error(error);
-        showToast('Error al guardar', 'error');
+        showToast('Error saving', 'error');
         return;
     }
 
@@ -3106,7 +3283,7 @@ function renderLastStatusWidget() {
 
     if (textarea) textarea.value = '';
     renderFicha();
-    showToast('Estado publicado', 'success');
+    showToast('Update posted', 'success');
 }
 
         function openProjectNoteEditor(noteId = null) {
@@ -3145,13 +3322,13 @@ function renderLastStatusWidget() {
     const color = colorEl ? colorEl.value : 'yellow';
 
     if (!title && !body && !rawUrl) {
-        showToast('Añade al menos título, contenido o URL.', 'warning');
+        showToast('Add at least a title, content or URL.', 'warning');
         return;
     }
 
     const normalizedUrl = normalizeDocumentationUrl(rawUrl);
     if (normalizedUrl === null) {
-        showToast('URL inválida. Usa una URL http(s) válida.', 'error');
+        showToast('Invalid URL. Use a valid http(s) URL.', 'error');
         return;
     }
 
@@ -3173,9 +3350,9 @@ function renderLastStatusWidget() {
             .eq('id', editId);
 
         if (error) {
-            const details = formatSupabaseError(error, 'No se pudo actualizar la nota');
-            console.error('Error actualizando nota:', details);
-            showToast('Error actualizando nota: ' + details, 'error');
+            const details = formatSupabaseError(error, 'Could not update the note');
+            console.error('Error updating note:', details);
+            showToast('Error updating note: ' + details, 'error');
             return;
         }
     } else {
@@ -3196,9 +3373,9 @@ function renderLastStatusWidget() {
             .insert(payload);
 
         if (error) {
-            const details = formatSupabaseError(error, 'No se pudo guardar la nota');
-            console.error('Error guardando nota:', details);
-            showToast('Error guardando nota: ' + details, 'error');
+            const details = formatSupabaseError(error, 'Could not save the note');
+            console.error('Error saving note:', details);
+            showToast('Error saving note: ' + details, 'error');
             return;
         }
     }
@@ -3207,11 +3384,11 @@ function renderLastStatusWidget() {
     projectNoteEditorState.editNoteId = null;
     await loadProjectNotes();
     renderFicha();
-    showToast(editId ? 'Nota actualizada' : 'Nota guardada', 'success');
+    showToast(editId ? 'Note updated' : 'Note saved', 'success');
 }
 
         async function deleteProjectNote(noteId) {
-    const confirmDelete = confirm('¿Eliminar esta nota?');
+    const confirmDelete = confirm('Delete this note?');
     if (!confirmDelete) return;
 
     const { error } = await supabaseClient
@@ -3220,9 +3397,9 @@ function renderLastStatusWidget() {
         .eq('id', noteId);
 
     if (error) {
-        const details = formatSupabaseError(error, 'No se pudo eliminar la nota');
-        console.error('Error eliminando nota:', details);
-        showToast('Error eliminando nota: ' + details, 'error');
+        const details = formatSupabaseError(error, 'Could not delete the note');
+        console.error('Error deleting note:', details);
+        showToast('Error deleting note: ' + details, 'error');
         return;
     }
 
@@ -3233,7 +3410,7 @@ function renderLastStatusWidget() {
 
     await loadProjectNotes();
     renderFicha();
-    showToast('Nota eliminada', 'success');
+    showToast('Note deleted', 'success');
 }
 
         function renderProjectNotesWidget() {
@@ -3251,31 +3428,31 @@ function renderLastStatusWidget() {
 
     let html = `<div class="widget-box project-notes-widget">
         <div class="widget-header notes-widget-header">
-            <div class="widget-title">📄 Notas del proyecto</div>
-            <button type="button" class="notes-add-btn" onclick="openProjectNoteEditor()" title="Nueva nota" aria-label="Nueva nota">+</button>
+            <div class="widget-title">Project Notes</div>
+            <button type="button" class="notes-add-btn" onclick="openProjectNoteEditor()" title="New note" aria-label="New note">+</button>
         </div>`;
 
     if (projectNoteEditorState.isOpen) {
         html += `
         <div class="project-note-editor">
-            <input id="projectNoteTitle" type="text" maxlength="120" placeholder="Título breve" aria-label="Título de la nota" value="${escapeHtml(noteTitle)}">
-            <textarea id="projectNoteBody" placeholder="Info general, contexto, enlaces, pendientes..." aria-label="Contenido de la nota">${escapeHtml(noteBody)}</textarea>
-            <input id="projectNoteUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://... (opcional)" aria-label="Enlace de la nota" value="${escapeHtml(noteUrl)}">
+            <input id="projectNoteTitle" type="text" maxlength="120" placeholder="Short title" aria-label="Note title" value="${escapeHtml(noteTitle)}">
+            <textarea id="projectNoteBody" placeholder="General info, context, links, to-dos..." aria-label="Note content">${escapeHtml(noteBody)}</textarea>
+            <input id="projectNoteUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://... (optional)" aria-label="Note link" value="${escapeHtml(noteUrl)}">
             <div class="project-note-editor-row">
-                <select id="projectNoteColor" aria-label="Color de la nota">
-                    <option value="yellow" ${noteColor === 'yellow' ? 'selected' : ''}>Amarillo</option>
-                    <option value="mint" ${noteColor === 'mint' ? 'selected' : ''}>Menta</option>
+                <select id="projectNoteColor" aria-label="Note color">
+                    <option value="yellow" ${noteColor === 'yellow' ? 'selected' : ''}>Yellow</option>
+                    <option value="mint" ${noteColor === 'mint' ? 'selected' : ''}>Mint</option>
                     <option value="salmon" ${noteColor === 'salmon' ? 'selected' : ''}>Salmon</option>
-                    <option value="sky" ${noteColor === 'sky' ? 'selected' : ''}>Cielo</option>
+                    <option value="sky" ${noteColor === 'sky' ? 'selected' : ''}>Sky</option>
                 </select>
-                <button type="button" class="btn-save-note" onclick="saveProjectNote()">Guardar</button>
-                <button type="button" class="btn-cancel-note" onclick="closeProjectNoteEditor()">Cancelar</button>
+                <button type="button" class="btn-save-note" onclick="saveProjectNote()">Save</button>
+                <button type="button" class="btn-cancel-note" onclick="closeProjectNoteEditor()">Cancel</button>
             </div>
         </div>`;
     }
 
     if (!notes.length) {
-        html += `<div class="empty-state empty-state--compact">Sin notas todavía. Pulsa + para crear la primera.</div>`;
+        html += `<div class="empty-state empty-state--compact">No notes yet. Press + to create the first one.</div>`;
         html += `</div>`;
         return html;
     }
@@ -3285,20 +3462,20 @@ function renderLastStatusWidget() {
     notes.forEach(note => {
         const updatedDate = note.updatedAt ? new Date(note.updatedAt) : null;
         const dateText = updatedDate
-            ? updatedDate.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })
+            ? updatedDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })
             : '';
 
         html += `
         <article class="project-note-card note-color-${escapeHtml(note.color || 'yellow')}">
             <div class="project-note-card-header">
-                <div class="project-note-title">${escapeHtml(note.title || 'Nota rápida')}</div>
+                <div class="project-note-title">${escapeHtml(note.title || 'Quick note')}</div>
                 <div class="project-note-actions">
-                    <button type="button" onclick="openProjectNoteEditor('${note.id}')" title="Editar nota">Editar</button>
-                    <button type="button" class="project-note-delete" onclick="deleteProjectNote('${note.id}')" title="Eliminar nota" aria-label="Eliminar nota">×</button>
+                    <button type="button" onclick="openProjectNoteEditor('${note.id}')" title="Edit note">Edit</button>
+                    <button type="button" class="project-note-delete" onclick="deleteProjectNote('${note.id}')" title="Delete note" aria-label="Delete note">×</button>
                 </div>
             </div>
             ${note.body ? `<div class="project-note-body">${escapeHtml(note.body).replace(/\n/g, '<br>')}</div>` : ''}
-            ${note.url ? `<a class="project-note-link" href="${escapeHtml(note.url)}" target="_blank" rel="noopener noreferrer">Abrir enlace</a>` : ''}
+            ${note.url ? `<a class="project-note-link" href="${escapeHtml(note.url)}" target="_blank" rel="noopener noreferrer">Open link</a>` : ''}
             <div class="project-note-meta">${dateText}${note.createdBy ? ` | ${escapeHtml(note.createdBy)}` : ''}</div>
         </article>`;
     });
@@ -3316,12 +3493,7 @@ function renderLastStatusWidget() {
         // =====================================================
 
         function renderIncidentsWidgetInPlace() {
-            const existing = document.getElementById('incidentsWidget');
-            if (existing) {
-                const parent = existing.parentElement;
-                existing.remove();
-                parent.insertAdjacentHTML('afterbegin', renderIncidentsWidget());
-            }
+            replaceWidgetInPlace('incidentsWidget', renderIncidentsWidget());
         }
 
         async function addIncident() {
@@ -3339,7 +3511,7 @@ function renderLastStatusWidget() {
                     created_by: currentUser || 'US'
                 });
 
-            if (error) { console.error('Error añadiendo incidencia:', error); showToast('No se pudo guardar el cambio', 'error'); return; }
+            if (error) { console.error('Error añadiendo incidencia:', error); showToast('Could not save change', 'error'); return; }
             await loadIncidents();
             renderIncidentsWidgetInPlace();
         }
@@ -3350,19 +3522,19 @@ function renderLastStatusWidget() {
                 .update({ resolved: resolved })
                 .eq('id', id);
 
-            if (error) { console.error(error); showToast('No se pudo guardar el cambio', 'error'); return; }
+            if (error) { console.error(error); showToast('Could not save change', 'error'); return; }
             await loadIncidents();
             renderIncidentsWidgetInPlace();
         }
 
         async function deleteIncident(id) {
-            if (!confirm('¿Eliminar esta incidencia?')) return;
+            if (!confirm('Delete this incident?')) return;
             const { error } = await supabaseClient
                 .from('project_incidents')
                 .delete()
                 .eq('id', id);
 
-            if (error) { console.error(error); showToast('No se pudo guardar el cambio', 'error'); return; }
+            if (error) { console.error(error); showToast('Could not save change', 'error'); return; }
             await loadIncidents();
             renderIncidentsWidgetInPlace();
         }
@@ -3377,35 +3549,35 @@ function renderLastStatusWidget() {
 
             let html = `<div class="widget-box incidents-widget" id="incidentsWidget">
         <div class="widget-header">
-            <div class="widget-title">&#9889; Incidencias</div>
-            ${open.length > 0 ? `<span class="incidents-open-badge">${open.length} abierta${open.length > 1 ? 's' : ''}</span>` : ''}
+            <div class="widget-title">Incidents</div>
+            ${open.length > 0 ? `<span class="incidents-open-badge">${open.length} open</span>` : ''}
         </div>
         <div class="incidents-list">`;
 
             if (!all.length) {
-                html += `<div class="empty-state empty-state--compact">Sin incidencias registradas.</div>`;
+                html += `<div class="empty-state empty-state--compact">No incidents recorded.</div>`;
             } else {
                 all.forEach(incident => {
-                    const dateStr = new Date(incident.createdAt).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+                    const dateStr = new Date(incident.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
                     html += `
                 <div class="incident-item ${incident.resolved ? 'incident-resolved' : 'incident-open'}">
-                    <label class="incident-check" title="${incident.resolved ? 'Reabrir' : 'Marcar resuelta'}">
-                        <input type="checkbox" ${incident.resolved ? 'checked' : ''} aria-label="${incident.resolved ? 'Reabrir' : 'Marcar resuelta'}: ${escapeHtml(incident.description)}" onchange="toggleIncident('${incident.id}', this.checked)">
+                    <label class="incident-check" title="${incident.resolved ? 'Reopen' : 'Mark resolved'}">
+                        <input type="checkbox" ${incident.resolved ? 'checked' : ''} aria-label="${incident.resolved ? 'Reopen' : 'Mark resolved'}: ${escapeHtml(incident.description)}" onchange="toggleIncident('${incident.id}', this.checked)">
                     </label>
                     <div class="incident-content">
                         <span class="incident-text">${escapeHtml(incident.description)}</span>
                         <span class="incident-meta">${dateStr}${incident.createdBy ? ` &middot; ${escapeHtml(incident.createdBy)}` : ''}</span>
                     </div>
-                    <button type="button" class="incident-delete" onclick="deleteIncident('${incident.id}')" title="Eliminar incidencia" aria-label="Eliminar incidencia: ${escapeHtml(incident.description)}">&times;</button>
+                    <button type="button" class="incident-delete" onclick="deleteIncident('${incident.id}')" title="Delete incident" aria-label="Delete incident: ${escapeHtml(incident.description)}">&times;</button>
                 </div>`;
                 });
             }
 
             html += `</div>
         <div class="weekly-add-row">
-            <input type="text" id="incidentNewText" class="weekly-new-task-input" placeholder="Describir incidencia..." aria-label="Nueva incidencia"
+            <input type="text" id="incidentNewText" class="weekly-new-task-input" placeholder="Describe incident..." aria-label="New incident"
                 onkeydown="if(event.key==='Enter') addIncident()">
-            <button type="button" class="weekly-add-btn" onclick="addIncident()" title="A&ntilde;adir incidencia" aria-label="A&ntilde;adir incidencia">+</button>
+            <button type="button" class="weekly-add-btn" onclick="addIncident()" title="Add incident" aria-label="Add incident">+</button>
         </div>
     </div>`;
 
@@ -3421,64 +3593,70 @@ function renderLastStatusWidget() {
 
         function renderFicha() {
             if (!currentProjectId) {
-                document.getElementById('fichaView').innerHTML = `<div class="empty-state">Selecciona un proyecto para ver su ficha.</div>`;
+                document.getElementById('fichaView').innerHTML = `<div class="empty-state">Select a project to see its details.</div>`;
                 return;
             }
 
             const project = projects.find(p => p.id === currentProjectId);
             if (!project) {
-                document.getElementById('fichaView').innerHTML = `<div class="empty-state">Proyecto no encontrado.</div>`;
+                document.getElementById('fichaView').innerHTML = `<div class="empty-state">Project not found.</div>`;
                 return;
             }
 
-            // Calcular progreso
+            // Progress
             const progressPercent = project.progress || 0;
-            const lightness = 75 - (progressPercent * 0.45);
-            const progressColor = `hsl(280, 60%, ${lightness}%)`;
+            const RING_C = 188.5; // 2·π·30
+            const ringOffset = RING_C - (RING_C * progressPercent / 100);
 
-            // --- Render Principal ---
+            // --- Main render ---
             let html = `<div class="ficha-header">
     <div class="project-meta-row">
         <div class="project-title-section">
             <div class="ficha-title">${escapeHtml(project.name)}
                 <span class="project-mini-indicators">
-                    <span class="mini-indicator priority-${(project.priority || 'Media').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Prioridad: ${project.priority || 'Media'}. Pulsa para cambiar" onclick="toggleIndicatorDropdown(event, 'priority')" onkeydown="handleIndicatorKey(event, 'priority')">
-                        <span class="mini-label">Prioridad:</span>
-                        <span class="mini-value">${project.priority || 'Media'}</span>
+                    <span class="mini-indicator priority-${(project.priority || 'Media').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Priority: ${getPriorityLabel(project.priority)}. Click to change" onclick="toggleIndicatorDropdown(event, 'priority')" onkeydown="handleIndicatorKey(event, 'priority')">
+                        <span class="mini-label">Priority:</span>
+                        <span class="mini-value">${getPriorityLabel(project.priority)}</span>
                         <div class="indicator-dropdown" id="dropdown-priority">
-                            <div class="indicator-option ${project.priority === 'Baja' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'priority', 'Baja')" onkeydown="activateOnEnterOrSpace(event)">Baja</div>
-                            <div class="indicator-option ${(project.priority || 'Media') === 'Media' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'priority', 'Media')" onkeydown="activateOnEnterOrSpace(event)">Media</div>
-                            <div class="indicator-option ${project.priority === 'Alta' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'priority', 'Alta')" onkeydown="activateOnEnterOrSpace(event)">Alta</div>
+                            <div class="indicator-option ${project.priority === 'Baja' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'priority', 'Baja')" onkeydown="activateOnEnterOrSpace(event)">Low</div>
+                            <div class="indicator-option ${(project.priority || 'Media') === 'Media' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'priority', 'Media')" onkeydown="activateOnEnterOrSpace(event)">Medium</div>
+                            <div class="indicator-option ${project.priority === 'Alta' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'priority', 'Alta')" onkeydown="activateOnEnterOrSpace(event)">High</div>
+                            <div class="indicator-option ${project.priority === 'Crítica' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'priority', 'Crítica')" onkeydown="activateOnEnterOrSpace(event)">Critical</div>
                         </div>
                     </span>
-                    <span class="mini-indicator impact-${(project.impact || 'Medio').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Impacto: ${project.impact || 'Medio'}. Pulsa para cambiar" onclick="toggleIndicatorDropdown(event, 'impact')" onkeydown="handleIndicatorKey(event, 'impact')">
-                        <span class="mini-label">Impacto:</span>
-                        <span class="mini-value">${project.impact || 'Medio'}</span>
+                    <span class="mini-indicator impact-${(project.impact || 'Medio').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Impact: ${getImpactLabel(project.impact)}. Click to change" onclick="toggleIndicatorDropdown(event, 'impact')" onkeydown="handleIndicatorKey(event, 'impact')">
+                        <span class="mini-label">Impact:</span>
+                        <span class="mini-value">${getImpactLabel(project.impact)}</span>
                         <div class="indicator-dropdown" id="dropdown-impact">
-                            <div class="indicator-option ${project.impact === 'Bajo' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'impact', 'Bajo')" onkeydown="activateOnEnterOrSpace(event)">Bajo</div>
-                            <div class="indicator-option ${(project.impact || 'Medio') === 'Medio' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'impact', 'Medio')" onkeydown="activateOnEnterOrSpace(event)">Medio</div>
-                            <div class="indicator-option ${project.impact === 'Alto' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'impact', 'Alto')" onkeydown="activateOnEnterOrSpace(event)">Alto</div>
+                            <div class="indicator-option ${project.impact === 'Bajo' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'impact', 'Bajo')" onkeydown="activateOnEnterOrSpace(event)">Low</div>
+                            <div class="indicator-option ${(project.impact || 'Medio') === 'Medio' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'impact', 'Medio')" onkeydown="activateOnEnterOrSpace(event)">Medium</div>
+                            <div class="indicator-option ${project.impact === 'Alto' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'impact', 'Alto')" onkeydown="activateOnEnterOrSpace(event)">High</div>
                         </div>
                     </span>
-                    <button type="button" class="resp-btn-header" data-project-id="${project.id}" title="Añadir responsable" aria-label="Añadir responsable" onclick="openResponsiblesPopover('${project.id}')">+</button>
+                    <button type="button" class="resp-btn-header" data-project-id="${project.id}" title="Add owner" aria-label="Add owner" onclick="openResponsiblesPopover('${project.id}')">+</button>
                     <div class="resp-badges-header">
                         ${project.responsibles && project.responsibles.length > 0 ? project.responsibles.map(resp => `
-                            <span class="resp-badge-header">${escapeHtml(resp)} <button type="button" onclick="removeResponsible('${project.id}', '${resp}')" class="resp-remove-header" title="Quitar a ${escapeHtml(resp)}" aria-label="Quitar responsable ${escapeHtml(resp)}">✕</button></span>
+                            <span class="resp-badge-header">${escapeHtml(resp)} <button type="button" onclick="removeResponsible('${project.id}', '${resp}')" class="resp-remove-header" title="Remove ${escapeHtml(resp)}" aria-label="Remove owner ${escapeHtml(resp)}">✕</button></span>
                         `).join('') : ''}
                     </div>
                 </span>
             </div>
         </div>
-        
+
         <div class="progress-indicator-centered">
-            <div class="progress-indicator">
-                <svg class="progress-ring" width="60" height="60" aria-hidden="true">
-                    <circle class="progress-ring-bg" cx="30" cy="30" r="26" stroke-width="5" />
-                    <circle class="progress-ring-progress" cx="30" cy="30" r="26" stroke-width="5"
-                            style="stroke-dasharray: 163; stroke-dashoffset: ${163 - (163 * progressPercent / 100)}; stroke: ${progressColor}" />
+            <div class="progress-ring-wrap" title="Project progress">
+                <svg class="progress-ring" viewBox="0 0 72 72" width="72" height="72" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="progressGrad" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0%" stop-color="var(--progress-grad-from)" />
+                            <stop offset="100%" stop-color="var(--progress-grad-to)" />
+                        </linearGradient>
+                    </defs>
+                    <circle class="progress-ring-bg" cx="36" cy="36" r="30" />
+                    <circle class="progress-ring-progress" cx="36" cy="36" r="30"
+                            style="stroke-dasharray: ${RING_C}; stroke-dashoffset: ${ringOffset};" />
                 </svg>
-                
-                <div class="progress-text">
+                <div class="progress-center">
                     <div class="progress-value">
                         <input type="number"
                                class="progress-input"
@@ -3486,67 +3664,77 @@ function renderLastStatusWidget() {
                                min="0"
                                max="100"
                                id="progressInput${project.id}"
-                               aria-label="Avance del proyecto (%)"
+                               aria-label="Project progress (%)"
                                onchange="updateProjectProgress('${project.id}', this.value)"
                                onwheel="handleProgressWheel(event, '${project.id}', this.value)"
                                onclick="this.select()" />
                         <span class="progress-percent" aria-hidden="true">%</span>
                     </div>
-                    <span class="progress-label" aria-hidden="true">Avance</span>
+                    <span class="progress-label" aria-hidden="true">Progress</span>
                 </div>
             </div>
         </div>
-        
+
         <div class="status-badge-container">
-            <div class="status-badge status-${(project.status || 'Verde').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Estado: ${getStatusText(project.status || 'Verde')}. Pulsa para cambiar" onclick="toggleIndicatorDropdown(event, 'status')" onkeydown="handleIndicatorKey(event, 'status')">
+            <div class="status-badge status-${(project.status || 'Verde').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Status: ${getStatusText(project.status || 'Verde')}. Click to change" onclick="toggleIndicatorDropdown(event, 'status')" onkeydown="handleIndicatorKey(event, 'status')">
                 <span class="status-icon">${getStatusIcon(project.status || 'Verde')}</span>
                 <span class="status-text">${getStatusText(project.status || "Verde")}</span>
                 <div class="indicator-dropdown" id="dropdown-status">
-                    <div class="indicator-option ${(project.status || 'Verde') === 'Verde' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Verde')" onkeydown="activateOnEnterOrSpace(event)">✅ On Time</div>
-                    <div class="indicator-option ${project.status === 'Ámbar' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Ámbar')" onkeydown="activateOnEnterOrSpace(event)">⚠️ Riesgo</div>
-                    <div class="indicator-option ${project.status === 'Rojo' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Rojo')" onkeydown="activateOnEnterOrSpace(event)">🚫 Bloqueo</div>
+                    <div class="indicator-option ${(project.status || 'Verde') === 'Verde' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Verde')" onkeydown="activateOnEnterOrSpace(event)"><span class="status-dot status-dot--verde"></span> On Track</div>
+                    <div class="indicator-option ${project.status === 'Ámbar' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Ámbar')" onkeydown="activateOnEnterOrSpace(event)"><span class="status-dot status-dot--ámbar"></span> At Risk</div>
+                    <div class="indicator-option ${project.status === 'Rojo' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Rojo')" onkeydown="activateOnEnterOrSpace(event)"><span class="status-dot status-dot--rojo"></span> Blocked</div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="ficha-row">
+    </div>`;
+
+            // Short project description, below the header card.
+            html += `<div class="ficha-description">
+        <div class="ficha-description-label">Description</div>
+        <textarea class="ficha-description-input" rows="2" placeholder="Add a short project description..."
+            aria-label="Project description"
+            onchange="updateProjectField('${project.id}','description', this.value)">${escapeHtml(project.description || '')}</textarea>
+    </div>`;
+
+            // Details card (project fields) — first cell of the bento grid.
+            html += `<div class="ficha-bento">
+    <section class="bento-card bento-card--details">
+        <h3 class="bento-title">Details</h3>
+        <div class="ficha-fields-grid">
         <div class="ficha-field">
-            <div class="ficha-label">Fecha inicio</div>
+            <div class="ficha-label">Start date</div>
             <div class="ficha-value">
-                <input type="date" aria-label="Fecha inicio" value="${project.startDate || ''}" onchange="updateProjectField('${project.id}','startDate', this.value)">
+                <input type="date" aria-label="Start date" value="${project.startDate || ''}" onchange="updateProjectField('${project.id}','startDate', this.value)">
             </div>
         </div>
         <div class="ficha-field">
-            <div class="ficha-label">Fecha fin</div>
+            <div class="ficha-label">End date</div>
             <div class="ficha-value">
-                <input type="date" aria-label="Fecha fin" value="${project.endDate || ''}" onchange="updateProjectField('${project.id}','endDate', this.value)">
+                <input type="date" aria-label="End date" value="${project.endDate || ''}" onchange="updateProjectField('${project.id}','endDate', this.value)">
             </div>
         </div>
-    </div>
-    <div class="ficha-row">
         <div class="ficha-field">
-            <div class="ficha-label">Fase</div>
+            <div class="ficha-label">Phase</div>
             <div class="ficha-value">
-                <select aria-label="Fase" onchange="updateProjectField('${project.id}','phase', this.value)">
+                <select aria-label="Phase" onchange="updateProjectField('${project.id}','phase', this.value)">
                     ${renderPhaseOptions(project.phase)}
                 </select>
             </div>
         </div>
         <div class="ficha-field">
-            <div class="ficha-label">Ahorro (€)</div>
+            <div class="ficha-label">Savings (€)</div>
             <div class="ficha-value">
-                <input type="number" 
+                <input type="number"
                        placeholder="0.00"
-                       aria-label="Ahorro en euros"
-                       step="0.01"  
+                       aria-label="Savings in euros"
+                       step="0.01"
                        min="0"
-                       value="${project.volume || ''}" 
+                       value="${project.volume || ''}"
                        onchange="updateProjectField('${project.id}','volume', this.value)">
             </div>
         </div>
-    </div>
-    <div class="ficha-row">
         <div class="ficha-field">
             <div class="ficha-label">Stakeholders</div>
             <div class="ficha-value">
@@ -3554,42 +3742,47 @@ function renderLastStatusWidget() {
             </div>
         </div>
         <div class="ficha-field">
-            <div class="ficha-label">Ahorro (FTE)</div>
+            <div class="ficha-label">Country</div>
             <div class="ficha-value">
-                <input type="number" 
+                <input type="text" aria-label="Country" value="${escapeHtml(project.country || '')}" onchange="updateProjectField('${project.id}','country', this.value)">
+            </div>
+        </div>
+        <div class="ficha-field">
+            <div class="ficha-label">Savings (FTE)</div>
+            <div class="ficha-value">
+                <input type="number"
                        placeholder="0.0"
-                       aria-label="Ahorro en FTE"
-                       step="0.1"  
+                       aria-label="Savings in FTE"
+                       step="0.1"
                        min="0"
-                       value="${project.fte || ''}" 
+                       value="${project.fte || ''}"
                        onchange="updateProjectField('${project.id}','fte', this.value)">
             </div>
         </div>
-    </div>
-    <div class="ficha-row">
         <div class="ficha-field">
-            <div class="ficha-label">Responsable BAU</div>
+            <div class="ficha-label">BAU owner</div>
             <div class="ficha-value">
-                <select aria-label="Responsable BAU" title="Quién mantiene la solución cuando termina el proyecto" onchange="updateProjectField('${project.id}','bauOwner', this.value)">
+                <select aria-label="BAU owner" title="Who maintains the solution once the project ends" onchange="updateProjectField('${project.id}','bauOwner', this.value)">
                     ${renderBauOwnerOptions(project.bauOwner)}
                 </select>
             </div>
         </div>
-    </div>
-</div>`;
+        </div>
+    </section>`;
 
-            // Secciones principales (prerrequisitos + comentarios) en una rejilla propia,
-            // fuera de la cabecera. En pantallas estrechas pasa a una columna (CSS).
+            // Weekly Capacity sits to the right of Details (same row).
+            html += renderCapacityWidget();
+
+            // Main sections (prerequisites + daily comments) as bento cards.
             const showPrerequisites = Array.isArray(project.prerequisites) && project.prerequisites.length > 0;
-            html += `<div class="ficha-sections-grid${showPrerequisites ? '' : ' ficha-sections-grid--single'}">`;
 
 
 
-            // Prerrequisitos
+            // Prerequisites
             if (showPrerequisites) {
 
-                html += `<div class="ficha-section">
-        <h3 class="section-title">Prerrequisitos y Documentación</h3>
+                html += `<section class="bento-card bento-card--prereq">
+        <h3 class="bento-title">Prerequisites &amp; Documentation</h3>
         <div class="checkbox-group-2col">`;
 
                 // 1. Obtenemos lo que tiene guardado el proyecto actualmente
@@ -3615,8 +3808,8 @@ function renderLastStatusWidget() {
             <div class="prereq-left">
                 <input type="checkbox"
                        class="prereq-checkbox"
-                       aria-label="${stdName} completado" 
-                       ${isDone ? 'checked' : ''} 
+                       aria-label="${stdName} completed"
+                       ${isDone ? 'checked' : ''}
                        ${mainDisabled}
                        onchange="togglePrereqStatus('${project.id}', '${stdName}', 'done', this.checked)">
                 `;
@@ -3624,18 +3817,18 @@ function renderLastStatusWidget() {
                         html += `<a href="${safeUrl}" class="prereq-label prereq-link ${labelClass}" target="_blank" rel="noopener noreferrer"
                             onclick="event.stopPropagation();"
                             oncontextmenu="event.preventDefault(); handlePrereqClick(event, '${project.id}', '${stdName}'); return false;"
-                            title="Abrir documentación">${stdName}</a>
-                            <button type="button" class="prereq-url-btn" title="Editar URL de documentación" aria-label="Editar URL de documentación de ${stdName}"
+                            title="Open documentation">${stdName}</a>
+                            <button type="button" class="prereq-url-btn" title="Edit documentation URL" aria-label="Edit documentation URL for ${stdName}"
                             onclick="handlePrereqClick(event, '${project.id}', '${stdName}')">✎</button>`;
                     } else {
                         html += `<button type="button" class="prereq-label prereq-add-url ${labelClass}"
                             onclick="handlePrereqClick(event, '${project.id}', '${stdName}')"
-                            title="Añadir URL de documentación">${stdName}</button>`;
+                            title="Add documentation URL">${stdName}</button>`;
                     }
                     html += `
             </div>
             <div class="prereq-na-wrapper">
-                <label for="na-${index}" title="No aplica">N/A</label>
+                <label for="na-${index}" title="Not applicable">N/A</label>
                 <input type="checkbox" 
                        id="na-${index}"
                        class="prereq-na-checkbox"
@@ -3644,9 +3837,17 @@ function renderLastStatusWidget() {
             </div>
         </div>`;
                 });
-                html += `</div></div>`;
+                html += `</div></section>`;
 
             }
+
+            // Weekly (goals) + Project Notes sit side by side, below Prerequisites.
+            html += renderWeeklyWidget();
+            html += renderProjectNotesWidget();
+
+            // Last Update + Incidents, below the row above.
+            html += renderLastStatusWidget();
+            html += renderIncidentsWidget();
 
             // --- Comentarios (FORMATO EXACTO DAILY, CON HILOS) ---
             const projectComments = getVisibleCommentsByProject(currentProjectId);
@@ -3662,14 +3863,18 @@ function renderLastStatusWidget() {
                     projectRepliesByParent[r.parentId].push(r);
                 });
 
-            html += `<div class="ficha-section">
-        <div class="section-title">
-            <span>Comentarios de dailys (${projectComments.length})</span>
-            <button type="button" class="section-action-btn" onclick="goToDailyFromFicha()">📅 Ver en Daily</button>
+            const fichaTodayKey = formatDateKey(new Date());
+            html += `<section class="bento-card bento-card--comments">
+        <div class="bento-title bento-title--row">
+            <span>Daily comments (${projectComments.length})</span>
+            <span class="bento-title-actions">
+                <button type="button" class="section-action-btn section-action-btn--accent" onclick="openDailyCommentModalFromCell(event, '${project.id}', '${fichaTodayKey}')">+ Add comment</button>
+                <button type="button" class="section-action-btn" onclick="goToDailyFromFicha()">View in Daily</button>
+            </span>
         </div>`;
 
             if (projectTopLevelComments.length === 0) {
-                html += `<div class="empty-state">Sin comentarios aún. Añade tu primer comentario desde la vista Daily.</div>`;
+                html += `<div class="empty-state">No comments yet. Use “+ Add comment” or the Daily view.</div>`;
             } else {
                 html += `<div class="comments-box">`;
                 projectTopLevelComments.forEach(comment => {
@@ -3687,15 +3892,14 @@ function renderLastStatusWidget() {
 
                     const responsable = comment.responsible || 'ND';
 
-                    // Obtener iniciales del Autor (quien escribió)
-                    // Si no tienes el campo 'userName' guardado, usará 'U' por defecto.
-                    const autorName = escapeHtml(comment.userName || 'Usuario');
-                    const iniciales = escapeHtml((comment.userName || 'Usuario').substring(0, 2).toUpperCase());
+                    // Author initials (whoever wrote the comment); defaults to 'User'.
+                    const autorName = escapeHtml(comment.userName || 'User');
+                    const iniciales = escapeHtml((comment.userName || 'User').substring(0, 2).toUpperCase());
 
                     const isCompleted = comment.completed;
                     const completedClass = isCompleted ? 'completed' : '';
-                    const completedBadge = isCompleted ? '<span class="completion-badge">COMPLETADO</span>' : '';
-                    const personalBadge = comment.isPersonal ? '<span class="completion-badge completion-badge--private">PRIVADA</span>' : '';
+                    const completedBadge = isCompleted ? '<span class="completion-badge">DONE</span>' : '';
+                    const personalBadge = comment.isPersonal ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : '';
 
                     html += `
             <div class="comment-entry ${completedClass}">
@@ -3703,12 +3907,12 @@ function renderLastStatusWidget() {
                     <div class="comment-checkbox-wrapper">
                          <input type="checkbox" class="comment-checkbox"
                                 ${isCompleted ? 'checked' : ''}
-                                aria-label="Marcar como completado"
+                                aria-label="Mark as done"
                                 onclick="toggleCommentCompletionFromFicha(event, '${comment.id}')">
-                         <div class="comment-avatar" title="Autor: ${autorName}">${iniciales}</div>
+                         <div class="comment-avatar" title="Author: ${autorName}">${iniciales}</div>
                          <div class="comment-head-meta">
                             <span class="comment-date">${formattedDate}</span>
-                            <span class="comment-resp-chip">Resp: <strong>${escapeHtml(responsable)}</strong></span>
+                            <span class="comment-resp-chip">Owner: <strong>${escapeHtml(responsable)}</strong></span>
                          </div>
                          
                          ${completedBadge}${personalBadge}
@@ -3718,15 +3922,15 @@ function renderLastStatusWidget() {
                     ${escapeHtml(comment.text).replace(/\n/g, '<br>')}
                 </div>
                 <div class="comment-actions comment-actions--inline comment-indent">
-                    ${hasReplies ? `<button type="button" class="comment-action-btn comment-thread-btn" aria-expanded="${isExpanded}" onclick="toggleCommentThreadFromFicha('${comment.id}')">💬 ${replies.length} ${replies.length === 1 ? 'respuesta' : 'respuestas'} ${isExpanded ? '▲' : '▼'}</button>` : ''}
-                    <button type="button" class="comment-action-btn comment-reply-btn" onclick="toggleReplyFormFromFicha('${comment.id}')">↩ Responder</button>
+                    ${hasReplies ? `<button type="button" class="comment-action-btn comment-thread-btn" aria-expanded="${isExpanded}" onclick="toggleCommentThreadFromFicha('${comment.id}')">${replies.length} ${replies.length === 1 ? 'reply' : 'replies'} ${isExpanded ? '▲' : '▼'}</button>` : ''}
+                    <button type="button" class="comment-action-btn comment-reply-btn" onclick="toggleReplyFormFromFicha('${comment.id}')">↩ Reply</button>
                 </div>
                 ${isReplying ? `<div class="reply-form comment-indent">
-                    <textarea class="reply-textarea" aria-label="Respuesta" id="replyTextFicha_${comment.id}" placeholder="Escribe tu respuesta..." rows="2"></textarea>
+                    <textarea class="reply-textarea" aria-label="Reply" id="replyTextFicha_${comment.id}" placeholder="Write your reply..." rows="2"></textarea>
                     <div class="reply-form-actions">
-                        <button type="button" class="comment-action-btn btn-reply-send" onclick="saveCommentReplyFromFicha('${comment.id}', '${comment.projectId}', '${comment.date}')">Enviar</button>
-                        <button type="button" class="comment-action-btn btn-reply-send-mail" onclick="saveCommentReplyFromFicha('${comment.id}', '${comment.projectId}', '${comment.date}', true)">Enviar y mail</button>
-                        <button type="button" class="comment-action-btn" onclick="cancelReplyFormFromFicha()">Cancelar</button>
+                        <button type="button" class="comment-action-btn btn-reply-send" onclick="saveCommentReplyFromFicha('${comment.id}', '${comment.projectId}', '${comment.date}')">Send</button>
+                        <button type="button" class="comment-action-btn btn-reply-send-mail" onclick="saveCommentReplyFromFicha('${comment.id}', '${comment.projectId}', '${comment.date}', true)">Send &amp; email</button>
+                        <button type="button" class="comment-action-btn" onclick="cancelReplyFormFromFicha()">Cancel</button>
                     </div>
                 </div>` : ''}
                 ${isExpanded && hasReplies ? `<div class="comment-replies comment-indent">${replies.map(r => {
@@ -3740,23 +3944,11 @@ function renderLastStatusWidget() {
                 html += `</div>`;
             }
 
-            html += `</div></div>`; // cierra .ficha-section (comentarios) y .ficha-sections-grid
+            html += `</section>`; // close .bento-card--comments
 
-            let rightSidebarHtml = `
-    <div class="right-sidebar">
-        <div class="right-sidebar-left-col">
-            <div class="right-sidebar-col">${renderCapacityWidget()}</div>
-            <div class="right-sidebar-col">${renderLastStatusWidget()}</div>
-        </div>
-        <div class="right-sidebar-right-col">
-            <div class="right-sidebar-col">${renderProjectNotesWidget()}</div>
-            <div class="right-sidebar-col">${renderWeeklyWidget()}</div>
-            <div class="right-sidebar-col">${renderIncidentsWidget()}</div>
-        </div>
-    </div>
-`;
+            html += `</div>`; // close .ficha-bento
 
-document.getElementById('fichaView').innerHTML = html + rightSidebarHtml;
+            document.getElementById('fichaView').innerHTML = html;
 
 
         }
@@ -3766,24 +3958,29 @@ document.getElementById('fichaView').innerHTML = html + rightSidebarHtml;
 const FTE_MONTHLY_HOURS = 160;
 
 const PHASE_CHART_COLORS = {
-    'Idea': 'phase-color-idea',
-    'En Progreso': 'phase-color-progreso',
-    'On Hold': 'phase-color-hold',
+    'Discovery': 'phase-color-discovery',
+    'Design': 'phase-color-design',
+    'Development': 'phase-color-development',
+    'Testing': 'phase-color-testing',
+    'Pilot': 'phase-color-pilot',
+    'Production': 'phase-color-production',
     'Hypercare': 'phase-color-hypercare',
     'BAU': 'phase-color-bau',
-    'Cerrado': 'phase-color-cerrado'
+    'Completed': 'phase-color-completed',
+    'Cancelled': 'phase-color-cancelled',
+    'On Hold': 'phase-color-hold'
 };
 
 function buildPhaseDonutHtml(projectsForChart) {
     const order = (typeof PROJECT_PHASES !== 'undefined' && PROJECT_PHASES.length) ? PROJECT_PHASES : Object.keys(PHASE_CHART_COLORS);
     const counts = order.map(phase => ({
         phase,
-        count: projectsForChart.filter(p => (p.phase || 'Idea') === phase).length
+        count: projectsForChart.filter(p => (p.phase || 'Discovery') === phase).length
     })).filter(entry => entry.count > 0);
 
     const total = counts.reduce((sum, e) => sum + e.count, 0);
     if (!total) {
-        return `<div class="chart-card"><h3 class="chart-title">📋 Proyectos por Fase</h3><div class="chart-empty">Sin datos para mostrar.</div></div>`;
+        return `<div class="chart-card"><h3 class="chart-title">Projects by Phase</h3><div class="chart-empty">No data to display.</div></div>`;
     }
 
     const radius = 54;
@@ -3793,7 +3990,7 @@ function buildPhaseDonutHtml(projectsForChart) {
     const segments = counts.map(entry => {
         const fraction = entry.count / total;
         const dash = fraction * circumference;
-        const seg = `<circle class="donut-segment ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-idea'}" cx="70" cy="70" r="${radius}"
+        const seg = `<circle class="donut-segment ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-discovery'}" cx="70" cy="70" r="${radius}"
             fill="none" stroke-width="20"
             stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}"
             stroke-dashoffset="${(-offsetAccum).toFixed(2)}"
@@ -3808,20 +4005,20 @@ function buildPhaseDonutHtml(projectsForChart) {
         <li class="donut-legend-item" tabindex="0" role="button"
             onclick="toggleDashFilter('fases','${entry.phase}')"
             onkeydown="activateOnEnterOrSpace(event)"
-            title="Filtrar por ${escapeHtml(entry.phase)}">
-            <span class="donut-legend-swatch ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-idea'}"></span>
+            title="Filter by ${escapeHtml(entry.phase)}">
+            <span class="donut-legend-swatch ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-discovery'}"></span>
             <span class="donut-legend-label">${escapeHtml(entry.phase)}</span>
             <span class="donut-legend-value u-figure">${entry.count}</span>
         </li>`).join('');
 
     return `
     <div class="chart-card">
-        <h3 class="chart-title">📋 Proyectos por Fase</h3>
+        <h3 class="chart-title">📋 Projects by Phase</h3>
         <div class="donut-chart-body">
-            <svg viewBox="0 0 140 140" class="donut-svg" role="img" aria-label="Distribución de proyectos por fase">
+            <svg viewBox="0 0 140 140" class="donut-svg" role="img" aria-label="Project distribution by phase">
                 ${segments}
                 <text x="70" y="65" text-anchor="middle" class="donut-center-value u-figure">${total}</text>
-                <text x="70" y="82" text-anchor="middle" class="donut-center-label u-kicker">Proyectos</text>
+                <text x="70" y="82" text-anchor="middle" class="donut-center-label u-kicker">Projects</text>
             </svg>
             <ul class="donut-legend">${legend}</ul>
         </div>
@@ -3829,16 +4026,16 @@ function buildPhaseDonutHtml(projectsForChart) {
 }
 
 function buildSavingsHistogramHtml(projectsForChart) {
-    const confirmed = projectsForChart.filter(p => (p.phase === 'BAU' || p.phase === 'Cerrado') && Number(p.fte) > 0);
+    const confirmed = projectsForChart.filter(p => (p.phase === 'BAU' || p.phase === 'Completed') && Number(p.fte) > 0);
 
     if (!confirmed.length) {
-        return `<div class="chart-card"><h3 class="chart-title">⏱️ Horas Ahorradas (BAU/Cerrado)</h3><div class="chart-empty">Aún no hay proyectos en BAU o Cerrado con ahorro en FTE.</div></div>`;
+        return `<div class="chart-card"><h3 class="chart-title">Hours Saved (BAU/Completed)</h3><div class="chart-empty">No BAU or Completed projects with FTE savings yet.</div></div>`;
     }
 
     const buckets = {};
     confirmed.forEach(p => {
         const dateStr = p.endDate || p.createdAt;
-        const monthKey = dateStr ? String(dateStr).slice(0, 7) : 'Sin fecha';
+        const monthKey = dateStr ? String(dateStr).slice(0, 7) : 'No date';
         const hours = Number(p.fte) * FTE_MONTHLY_HOURS;
         buckets[monthKey] = (buckets[monthKey] || 0) + hours;
     });
@@ -3865,7 +4062,7 @@ function buildSavingsHistogramHtml(projectsForChart) {
         const label = formatMonthLabelShort(key);
         return `
             <rect class="histogram-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(barHeight, 1).toFixed(1)}" rx="3">
-                <title>${label}: ${Math.round(value).toLocaleString('es-ES')} h</title>
+                <title>${label}: ${Math.round(value).toLocaleString('en-GB')} h</title>
             </rect>
             <text x="${(x + barWidth / 2).toFixed(1)}" y="${chartHeight - 6}" text-anchor="middle" class="histogram-axis-label">${label}</text>`;
     }).join('');
@@ -3880,21 +4077,21 @@ function buildSavingsHistogramHtml(projectsForChart) {
 
     return `
     <div class="chart-card">
-        <h3 class="chart-title">⏱️ Horas Ahorradas (BAU/Cerrado)</h3>
-        <div class="histogram-total u-figure">${totalHours.toLocaleString('es-ES')} h <span class="histogram-total-label u-kicker">acumuladas</span></div>
-        <svg viewBox="0 0 ${chartWidth} ${chartHeight}" class="histogram-svg" role="img" aria-label="Histograma de horas ahorradas por mes">
+        <h3 class="chart-title">Hours Saved (BAU/Completed)</h3>
+        <div class="histogram-total u-figure">${totalHours.toLocaleString('en-GB')} h <span class="histogram-total-label u-kicker">cumulative</span></div>
+        <svg viewBox="0 0 ${chartWidth} ${chartHeight}" class="histogram-svg" role="img" aria-label="Histogram of hours saved per month">
             <line x1="${padding}" y1="${padding + innerHeight}" x2="${chartWidth - padding}" y2="${padding + innerHeight}" class="histogram-axis-line" />
             ${bars}
             <polyline points="${linePoints}" class="histogram-trend-line" fill="none" />
         </svg>
-        <p class="chart-footnote">Estimado a ${FTE_MONTHLY_HOURS}h/mes por FTE ahorrado. Línea = acumulado.</p>
+        <p class="chart-footnote">Estimated at ${FTE_MONTHLY_HOURS}h/month per saved FTE. Line = cumulative.</p>
     </div>`;
 }
 
 function formatMonthLabelShort(monthKey) {
-    if (!monthKey || monthKey === 'Sin fecha') return 'S/F';
+    if (!monthKey || monthKey === 'No date') return 'N/D';
     const [year, month] = monthKey.split('-');
-    const names = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const idx = parseInt(month, 10) - 1;
     return `${names[idx] || month}'${(year || '').slice(2)}`;
 }
@@ -3905,15 +4102,18 @@ function renderDashboard() {
     container.innerHTML = '';
     
     if (!projects || !projects.length) {
-        container.innerHTML = `<div class="empty-state">No hay proyectos. Crea uno para ver el dashboard.</div>`;
+        container.innerHTML = `<div class="empty-state">No projects yet. Create one to see the dashboard.</div>`;
         return;
     }
 
     // Valores únicos para filtros
     const fases = Array.from(new Set(projects.map(p => p.phase).filter(Boolean))).sort();
-    const prioridades = Array.from(new Set(projects.map(p => p.priority).filter(Boolean))).sort();
     const impactos = Array.from(new Set(projects.map(p => p.impact).filter(Boolean))).sort();
     const estados = Array.from(new Set(projects.map(p => p.status).filter(Boolean))).sort();
+    const owners = Array.from(new Set(projects.flatMap(p => p.responsibles || []).filter(Boolean))).sort();
+    const countries = Array.from(new Set(projects.map(p => p.country).filter(Boolean))).sort();
+    // Priority is a fixed 4-level scale, shown regardless of what's in the data yet.
+    const PRIORITY_FILTER_OPTIONS = ['Crítica', 'Alta', 'Media', 'Baja'];
 
     // Contar filtros activos
     const activeFiltersCount = [
@@ -3922,82 +4122,113 @@ function renderDashboard() {
         (dashboardFilters.prioridades || []).length > 0,
         (dashboardFilters.impactos || []).length > 0,
         (dashboardFilters.estados || []).length > 0,
+        (dashboardFilters.owners || []).length > 0,
+        (dashboardFilters.countries || []).length > 0,
         dashboardFilters.fechaInicioDesde,
         dashboardFilters.fechaInicioHasta,
         dashboardFilters.fechaFinDesde,
         dashboardFilters.fechaFinHasta
     ].filter(Boolean).length;
 
+    const dashFilterMenuClass = key => `dash-filter-menu${openDashFilterMenu === key ? ' active' : ''}`;
+
     // BARRA DE FILTROS — pills/chips
     let html = `
+    <div class="dashboard-hero">
+        <h2 class="dashboard-hero-title">Portfolio Intelligence</h2>
+        <p class="dashboard-hero-subtitle">Centralized visibility across projects, deliverables, benefits and team capacity.</p>
+    </div>
     <div class="dash-filters">
-
         <div class="dash-filter-row">
             <div class="dash-filter-group">
-                <span class="dash-filter-label">🔍 Proyecto</span>
-                <input type="text" id="dashFilterProyecto" class="dash-filter-input" placeholder="Buscar..." aria-label="Buscar proyecto" value="${escapeHtml(dashboardFilters.proyecto || '')}">
+                <span class="dash-filter-label">Project</span>
+                <input type="text" id="dashFilterProyecto" class="dash-filter-input" placeholder="Search..." aria-label="Search project" value="${escapeHtml(dashboardFilters.proyecto || '')}">
             </div>
 
-            <div class="dash-filter-group">
-                <span class="dash-filter-label">🚦 Estado</span>
-                <div class="dash-pills">
-                    <button type="button" class="dash-pill dash-pill--verde${(dashboardFilters.estados||[]).includes('Verde') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Verde')}" onclick="toggleDashFilter('estados','Verde')">✅ On Time</button>
-                    <button type="button" class="dash-pill dash-pill--ambar${(dashboardFilters.estados||[]).includes('Ámbar') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Ámbar')}" onclick="toggleDashFilter('estados','Ámbar')">⚠️ Riesgo</button>
-                    <button type="button" class="dash-pill dash-pill--rojo${(dashboardFilters.estados||[]).includes('Rojo') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Rojo')}" onclick="toggleDashFilter('estados','Rojo')">🚫 Bloqueo</button>
-                </div>
-            </div>
-
-            ${fases.length ? `
-            <div class="dash-filter-group">
-                <span class="dash-filter-label">📋 Fase</span>
-                <div class="dash-pills">
-                    ${fases.map(f => `<button type="button" class="dash-pill${(dashboardFilters.fases||[]).includes(f) ? ' active' : ''}" aria-pressed="${(dashboardFilters.fases||[]).includes(f)}" onclick="toggleDashFilter('fases','${f}')">${f}</button>`).join('')}
-                </div>
-            </div>` : ''}
-
-            ${prioridades.length ? `
-            <div class="dash-filter-group">
-                <span class="dash-filter-label">⚡ Prioridad</span>
-                <div class="dash-pills">
-                    ${prioridades.map(p => `<button type="button" class="dash-pill${(dashboardFilters.prioridades||[]).includes(p) ? ' active' : ''}" aria-pressed="${(dashboardFilters.prioridades||[]).includes(p)}" onclick="toggleDashFilter('prioridades','${p}')">${p}</button>`).join('')}
-                </div>
-            </div>` : ''}
-
-            ${impactos.length ? `
-            <div class="dash-filter-group">
-                <span class="dash-filter-label">💥 Impacto</span>
-                <div class="dash-pills">
-                    ${impactos.map(i => `<button type="button" class="dash-pill${(dashboardFilters.impactos||[]).includes(i) ? ' active' : ''}" aria-pressed="${(dashboardFilters.impactos||[]).includes(i)}" onclick="toggleDashFilter('impactos','${i}')">${i}</button>`).join('')}
-                </div>
-            </div>` : ''}
-        </div>
-
-        <div class="dash-filter-row dash-filter-row--dates">
-            <div class="dash-filter-group">
-                <span class="dash-filter-label">📅 Inicio</span>
-                <div class="dash-date-range">
-                    <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaInicioDesde || ''}" aria-label="Inicio desde" onchange="setDashboardFilter('fechaInicioDesde', this.value)">
-                    <span class="dash-date-sep">→</span>
-                    <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaInicioHasta || ''}" aria-label="Inicio hasta" onchange="setDashboardFilter('fechaInicioHasta', this.value)">
+            <div class="dash-filter-dropdown">
+                <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'status')">Status${(dashboardFilters.estados||[]).length ? ` (${dashboardFilters.estados.length})` : ''} ▾</button>
+                <div class="${dashFilterMenuClass('status')}">
+                    <div class="dash-pills dash-pills--menu">
+                        <button type="button" class="dash-pill dash-pill--verde${(dashboardFilters.estados||[]).includes('Verde') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Verde')}" onclick="toggleDashFilter('estados','Verde')"><span class="dash-dot dash-dot--verde"></span> On Track</button>
+                        <button type="button" class="dash-pill dash-pill--ambar${(dashboardFilters.estados||[]).includes('Ámbar') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Ámbar')}" onclick="toggleDashFilter('estados','Ámbar')"><span class="dash-dot dash-dot--ambar"></span> At Risk</button>
+                        <button type="button" class="dash-pill dash-pill--rojo${(dashboardFilters.estados||[]).includes('Rojo') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Rojo')}" onclick="toggleDashFilter('estados','Rojo')"><span class="dash-dot dash-dot--rojo"></span> Blocked</button>
+                    </div>
                 </div>
             </div>
 
-            <div class="dash-filter-group">
-                <span class="dash-filter-label">📅 Fin</span>
-                <div class="dash-date-range">
-                    <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaFinDesde || ''}" aria-label="Fin desde" onchange="setDashboardFilter('fechaFinDesde', this.value)">
-                    <span class="dash-date-sep">→</span>
-                    <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaFinHasta || ''}" aria-label="Fin hasta" onchange="setDashboardFilter('fechaFinHasta', this.value)">
+            <div class="dash-filter-dropdown">
+                <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'phase')">Phase${(dashboardFilters.fases||[]).length ? ` (${dashboardFilters.fases.length})` : ''} ▾</button>
+                <div class="${dashFilterMenuClass('phase')}">
+                    <div class="dash-pills dash-pills--menu">
+                        ${fases.length ? fases.map(f => `<button type="button" class="dash-pill${(dashboardFilters.fases||[]).includes(f) ? ' active' : ''}" aria-pressed="${(dashboardFilters.fases||[]).includes(f)}" onclick="toggleDashFilter('fases','${f}')">${f}</button>`).join('') : '<div class="dash-filter-menu-empty">No phases yet</div>'}
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-filter-dropdown">
+                <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'priority')">Priority${(dashboardFilters.prioridades||[]).length ? ` (${dashboardFilters.prioridades.length})` : ''} ▾</button>
+                <div class="${dashFilterMenuClass('priority')}">
+                    <div class="dash-pills dash-pills--menu">
+                        ${PRIORITY_FILTER_OPTIONS.map(p => `<button type="button" class="dash-pill${(dashboardFilters.prioridades||[]).includes(p) ? ' active' : ''}" aria-pressed="${(dashboardFilters.prioridades||[]).includes(p)}" onclick="toggleDashFilter('prioridades','${p}')">${getPriorityLabel(p)}</button>`).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-filter-dropdown">
+                <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'impact')">Impact${(dashboardFilters.impactos||[]).length ? ` (${dashboardFilters.impactos.length})` : ''} ▾</button>
+                <div class="${dashFilterMenuClass('impact')}">
+                    <div class="dash-pills dash-pills--menu">
+                        ${impactos.length ? impactos.map(i => `<button type="button" class="dash-pill${(dashboardFilters.impactos||[]).includes(i) ? ' active' : ''}" aria-pressed="${(dashboardFilters.impactos||[]).includes(i)}" onclick="toggleDashFilter('impactos','${i}')">${getImpactLabel(i)}</button>`).join('') : '<div class="dash-filter-menu-empty">No impacts yet</div>'}
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-filter-dropdown">
+                <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'owner')">Owner${(dashboardFilters.owners||[]).length ? ` (${dashboardFilters.owners.length})` : ''} ▾</button>
+                <div class="${dashFilterMenuClass('owner')}">
+                    <div class="dash-pills dash-pills--menu">
+                        ${owners.length ? owners.map(o => `<button type="button" class="dash-pill${(dashboardFilters.owners||[]).includes(o) ? ' active' : ''}" aria-pressed="${(dashboardFilters.owners||[]).includes(o)}" onclick="toggleDashFilter('owners','${o}')">${escapeHtml(o)}</button>`).join('') : '<div class="dash-filter-menu-empty">No owners yet</div>'}
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-filter-dropdown">
+                <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'country')">Country${(dashboardFilters.countries||[]).length ? ` (${dashboardFilters.countries.length})` : ''} ▾</button>
+                <div class="${dashFilterMenuClass('country')}">
+                    <div class="dash-pills dash-pills--menu">
+                        ${countries.length ? countries.map(c => `<button type="button" class="dash-pill${(dashboardFilters.countries||[]).includes(c) ? ' active' : ''}" aria-pressed="${(dashboardFilters.countries||[]).includes(c)}" onclick="toggleDashFilter('countries','${c}')">${escapeHtml(c)}</button>`).join('') : '<div class="dash-filter-menu-empty">No countries yet</div>'}
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-filter-dropdown">
+                <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'dates')">Date range${(dashboardFilters.fechaInicioDesde||dashboardFilters.fechaInicioHasta||dashboardFilters.fechaFinDesde||dashboardFilters.fechaFinHasta) ? ' •' : ''} ▾</button>
+                <div class="${dashFilterMenuClass('dates')} dash-filter-menu--dates">
+                    <div class="dash-filter-group">
+                        <span class="dash-filter-label">Start</span>
+                        <div class="dash-date-range">
+                            <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaInicioDesde || ''}" aria-label="Start from" onchange="setDashboardFilter('fechaInicioDesde', this.value)">
+                            <span class="dash-date-sep">→</span>
+                            <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaInicioHasta || ''}" aria-label="Start to" onchange="setDashboardFilter('fechaInicioHasta', this.value)">
+                        </div>
+                    </div>
+                    <div class="dash-filter-group">
+                        <span class="dash-filter-label">End</span>
+                        <div class="dash-date-range">
+                            <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaFinDesde || ''}" aria-label="End from" onchange="setDashboardFilter('fechaFinDesde', this.value)">
+                            <span class="dash-date-sep">→</span>
+                            <input type="date" class="dash-filter-input dash-date-input" value="${dashboardFilters.fechaFinHasta || ''}" aria-label="End to" onchange="setDashboardFilter('fechaFinHasta', this.value)">
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="dash-filter-group dash-filter-group--action">
                 <button type="button" class="btn-clear-filters" onclick="clearDashboardFilters()"${activeFiltersCount ? '' : ' disabled'}>
-                    🗑️ Limpiar${activeFiltersCount > 0 ? ` (${activeFiltersCount})` : ''}
+                    Clear${activeFiltersCount > 0 ? ` (${activeFiltersCount})` : ''}
                 </button>
             </div>
         </div>
-
     </div>
     `;
 
@@ -4023,6 +4254,15 @@ function renderDashboard() {
 
         if (dashboardFilters.estados && dashboardFilters.estados.length > 0) {
             if (!dashboardFilters.estados.includes(p.status)) return false;
+        }
+
+        if (dashboardFilters.owners && dashboardFilters.owners.length > 0) {
+            const owners = p.responsibles || [];
+            if (!dashboardFilters.owners.some(o => owners.includes(o))) return false;
+        }
+
+        if (dashboardFilters.countries && dashboardFilters.countries.length > 0) {
+            if (!dashboardFilters.countries.includes(p.country)) return false;
         }
 
         if (dashboardFilters.fechaInicioDesde) {
@@ -4052,20 +4292,24 @@ function renderDashboard() {
     <div class="dashboard-content">
         <div class="dashboard-stats">
             <div class="stat-card">
-                <div class="stat-label">Proyectos</div>
+                <span class="stat-icon" aria-hidden="true">📁</span>
+                <div class="stat-label">Projects</div>
                 <div class="stat-value">${filteredProjects.length}</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Activos</div>
+                <span class="stat-icon" aria-hidden="true">🚀</span>
+                <div class="stat-label">Active</div>
                 <div class="stat-value">${filteredProjects.filter(p => getProjectGroup(p) === 'activos').length}</div>
             </div>
             <div class="stat-card">
+                <span class="stat-icon" aria-hidden="true">🔁</span>
                 <div class="stat-label">BAU</div>
                 <div class="stat-value">${filteredProjects.filter(p => getProjectGroup(p) === 'bau').length}</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Completados</div>
-                <div class="stat-value">${filteredProjects.filter(p => p.phase === 'Cerrado').length}</div>
+                <span class="stat-icon" aria-hidden="true">✅</span>
+                <div class="stat-label">Completed</div>
+                <div class="stat-value">${filteredProjects.filter(p => getProjectGroup(p) === 'completados').length}</div>
             </div>
         </div>
 
@@ -4078,16 +4322,16 @@ function renderDashboard() {
             <table class="dashboard-table">
                 <thead>
                     <tr>
-                        ${renderSortableHeader('name', 'Proyecto', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('startDate', 'Inicio', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('endDate', 'Fin', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('phase', 'Fase', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('priority', 'Prioridad', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('impact', 'Impacto', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('status', 'Estado', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('progress', 'Avance', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('volume', 'Ahorro €', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('fte', 'Ahorro FTE', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('name', 'Project', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('startDate', 'Start', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('endDate', 'End', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('phase', 'Phase', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('priority', 'Priority', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('impact', 'Impact', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('status', 'Status', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('progress', 'Progress', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('volume', 'Savings €', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('fte', 'Savings FTE', dashboardSort, 'toggleDashboardSort')}
                     </tr>
                 </thead>
                 <tbody>`;
@@ -4096,7 +4340,7 @@ function renderDashboard() {
     const sortedProjects = sortDashboardProjects(filteredProjects);
 
     if (!sortedProjects.length) {
-        html += `<tr><td colspan="10" class="table-empty">No hay proyectos que cumplan los filtros seleccionados.</td></tr>`;
+        html += `<tr><td colspan="10" class="table-empty">No projects match the selected filters.</td></tr>`;
     }
 
     sortedProjects.forEach(p => {
@@ -4111,21 +4355,21 @@ function renderDashboard() {
         <tr class="dashboard-row" tabindex="0" onclick="hideStatusTooltip(); selectProject('${p.id}')" onkeydown="activateOnEnterOrSpace(event)"
             onmouseenter="showStatusTooltip(event, '${p.id}')"
             onmouseleave="hideStatusTooltip()">
-            <td class="dash-name">${escapeHtml(p.name || 'Sin nombre')}</td>
+            <td class="dash-name">${escapeHtml(p.name || 'Untitled')}</td>
             <td>${start || '-'}</td>
             <td>${end || '-'}</td>
             <td><span class="badge badge-fase">${p.phase || '-'}</span></td>
-            <td><span class="badge badge-${(p.priority || 'Media').toLowerCase()}">${p.priority || '-'}</span></td>
-            <td><span class="badge badge-${(p.impact || 'Medio').toLowerCase()}">${p.impact || '-'}</span></td>
+            <td><span class="badge badge-${(p.priority || 'Media').toLowerCase()}">${p.priority ? getPriorityLabel(p.priority) : '-'}</span></td>
+            <td><span class="badge badge-${(p.impact || 'Medio').toLowerCase()}">${p.impact ? getImpactLabel(p.impact) : '-'}</span></td>
             <td><span class="badge badge-status badge-${(p.status || 'Verde').toLowerCase()}">${getStatusText(p.status) || '-'}</span></td>
             <td>
-                <div class="progress-bar-container" role="progressbar" aria-label="Avance" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100">
+                <div class="progress-bar-container" role="progressbar" aria-label="Progress" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: ${progress}%"></div>
                     <span class="progress-bar-text">${progress}%</span>
                 </div>
             </td>
-            <td class="dash-num-center">${volume.toLocaleString('es-ES')}</td>
-            <td class="dash-num-center">${fte.toLocaleString('es-ES', { minimumFractionDigits: 1 })}</td>
+            <td class="dash-num-center">${volume.toLocaleString('en-GB')}</td>
+            <td class="dash-num-center">${fte.toLocaleString('en-GB', { minimumFractionDigits: 1 })}</td>
         </tr>`;
     });
 
@@ -4135,15 +4379,15 @@ function renderDashboard() {
         </div>
 
         <div class="dashboard-summary">
-            <div class="summary-title">Totales</div>
+            <div class="summary-title">Totals</div>
             <div class="summary-row">
                 <div class="summary-item">
-                    <div class="summary-label">Ahorro Total €</div>
-                    <div class="summary-value">${totalVolume.toLocaleString('es-ES')} €</div>
+                    <div class="summary-label">Total savings €</div>
+                    <div class="summary-value">${totalVolume.toLocaleString('en-GB')} €</div>
                 </div>
                 <div class="summary-item">
-                    <div class="summary-label">Ahorro Total FTE</div>
-                    <div class="summary-value">${totalFte.toLocaleString('es-ES', { minimumFractionDigits: 1 })}</div>
+                    <div class="summary-label">Total savings FTE</div>
+                    <div class="summary-value">${totalFte.toLocaleString('en-GB', { minimumFractionDigits: 1 })}</div>
                 </div>
             </div>
         </div>
@@ -4160,14 +4404,14 @@ function renderDashboard() {
     html += `
     <div class="dashboard-capacity-section">
         <div class="capacity-card">
-            <h3 class="capacity-title">Dedicación Semanal del Equipo</h3>
-            <p class="capacity-subtitle">Suma de la capacidad asignada en todos los proyectos. Más del 100% indica sobrecarga.</p>
+            <h3 class="capacity-title">Team Weekly Allocation</h3>
+            <p class="capacity-subtitle">Sum of allocated capacity across all projects. Over 100% means overload.</p>
             <table class="capacity-table">
                 <thead>
                     <tr>
-                        <th>Usuario</th>
-                        <th class="dash-num-center">Actual</th>
-                        <th class="dash-num-center">Siguiente</th>
+                        <th>User</th>
+                        <th class="dash-num-center">Current</th>
+                        <th class="dash-num-center">Next</th>
                     </tr>
                 </thead>
                 <tbody>`;
@@ -4229,6 +4473,8 @@ function clearDashboardFilters() {
         prioridades: [],
         impactos: [],
         estados: [],
+        owners: [],
+        countries: [],
         fechaInicioDesde: '',
         fechaInicioHasta: '',
         fechaFinDesde: '',
@@ -4257,7 +4503,7 @@ function showStatusTooltip(event, projectId) {
 
     const last = statuses[0];
     const d = new Date(last.createdAt);
-    const dateStr = d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    const dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' });
 
     tooltip.innerHTML = `
         <div class="dst-header">
@@ -4480,9 +4726,9 @@ function sortDailyProjects(projects) {
 
         const VIEW_TITLES = {
             daily: 'Daily',
-            ficha: 'Ficha Proyecto',
-            equipo: 'Calendario de Equipo',
-            dashboard: 'Dashboard Proyectos'
+            ficha: 'Project Card',
+            equipo: 'Team Calendar',
+            dashboard: 'Projects Dashboard'
         };
 
         function switchView(view) {
@@ -4553,27 +4799,29 @@ function sortDailyProjects(projects) {
             const { data: projData, error: projError } = projectsResult;
             if (projError) {
                 console.error(projError);
-                showToast('Error cargando proyectos', 'error');
+                showToast('Error loading projects', 'error');
                 return;
             }
 
             const { data: comData, error: comError } = commentsResult;
             if (comError) {
                 console.error(comError);
-                showToast('Error cargando comentarios', 'error');
+                showToast('Error loading comments', 'error');
                 return;
             }
 
             projects = (projData || []).map(p => ({
                 id: p.id,
-                name: p.name || '(Sin nombre)',
+                name: p.name || '(No name)',
                 startDate: p.start_date || null,
                 endDate: p.end_date || null,
                 benefits: p.benefits || "",
-                // "Mantenimiento" es el nombre antiguo de la fase BAU
-                phase: p.phase === 'Mantenimiento' ? 'BAU' : (p.phase || "Idea"),
+                // Nombres de fase heredados de un vocabulario antiguo -> fase actual
+                phase: LEGACY_PHASE_MAP[p.phase] || p.phase || "Discovery",
                 bauOwner: p.bau_owner || '',
                 stakeholders: p.stakeholders || "",
+                description: p.description || "",
+                country: p.country || "",
                 volume: p.volume || "",
                 prerequisites: p.prerequisites || [],
                 priority: p.priority || "Media",
@@ -4722,65 +4970,144 @@ function sortDailyProjects(projects) {
         // =====================================================
 
 
+        // Team calendar view mode: 'week' | 'month' | 'year'
+        let teamViewMode = 'year';
+        let teamRefDate = new Date();
+
+        function setTeamViewMode(mode) {
+            if (!['week', 'month', 'year'].includes(mode)) return;
+            teamViewMode = mode;
+            renderTeamView();
+        }
+
+        function teamPrev() {
+            if (teamViewMode === 'year') currentMonth = new Date(currentMonth.getFullYear() - 1, 0, 1);
+            else if (teamViewMode === 'month') teamRefDate = new Date(teamRefDate.getFullYear(), teamRefDate.getMonth() - 1, 1);
+            else teamRefDate = new Date(teamRefDate.getFullYear(), teamRefDate.getMonth(), teamRefDate.getDate() - 7);
+            renderTeamView();
+        }
+
+        function teamNext() {
+            if (teamViewMode === 'year') currentMonth = new Date(currentMonth.getFullYear() + 1, 0, 1);
+            else if (teamViewMode === 'month') teamRefDate = new Date(teamRefDate.getFullYear(), teamRefDate.getMonth() + 1, 1);
+            else teamRefDate = new Date(teamRefDate.getFullYear(), teamRefDate.getMonth(), teamRefDate.getDate() + 7);
+            renderTeamView();
+        }
+
+        function teamToday() {
+            teamRefDate = new Date();
+            currentMonth = new Date();
+            renderTeamView();
+        }
+
         function renderTeamView() {
             const container = document.getElementById('teamView');
 
-            // Header con navegación de año
             const year = currentMonth.getFullYear();
-            const holidayCalendarStatus = Object.hasOwn(madridHolidaysByYear, year)
-                ? `<div class="holiday-calendar-status">Fechas festivas cargadas para ${year}</div>`
-                : `<div class="holiday-calendar-status holiday-calendar-status--pending" role="status">Calendario oficial de festivos ${year} pendiente de validar y cargar.</div>`;
+            const holidaysLoaded = Object.hasOwn(HOLIDAYS_BY_COUNTRY.ES || {}, year);
+            const holidayCalendarStatus = (teamViewMode === 'year' && !holidaysLoaded)
+                ? `<div class="holiday-calendar-status holiday-calendar-status--pending" role="status">Official ${year} public holidays pending validation.</div>`
+                : '';
+
+            // Navigation label depends on the active view mode.
+            let navLabel;
+            if (teamViewMode === 'year') {
+                navLabel = `${year}`;
+            } else if (teamViewMode === 'month') {
+                navLabel = teamRefDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+            } else {
+                const ws = getMonday(teamRefDate);
+                const we = new Date(ws); we.setDate(we.getDate() + 6);
+                const opt = { day: 'numeric', month: 'short' };
+                navLabel = `${ws.toLocaleDateString('en-GB', opt)} – ${we.toLocaleDateString('en-GB', opt)}, ${ws.getFullYear()}`;
+            }
+
+            const segBtn = (mode, label) =>
+                `<button type="button" class="team-view-seg-btn${teamViewMode === mode ? ' active' : ''}" aria-pressed="${teamViewMode === mode}" onclick="setTeamViewMode('${mode}')">${label}</button>`;
 
             let html = `
     <div class="team-header">
+        <div class="team-view-toggle" role="group" aria-label="Calendar range">
+            ${segBtn('week', 'Week')}${segBtn('month', 'Month')}${segBtn('year', 'Year')}
+        </div>
         <div class="month-navigation">
-            <button type="button" class="month-nav-btn" onclick="previousYear()">← Año anterior</button>
-            <div class="current-month">${year}</div>
-            <button type="button" class="month-nav-btn" onclick="nextYear()">Año siguiente →</button>
+            <button type="button" class="month-nav-btn" onclick="teamPrev()" aria-label="Previous">←</button>
+            <button type="button" class="month-nav-btn" onclick="teamToday()">Today</button>
+            <div class="current-month">${navLabel}</div>
+            <button type="button" class="month-nav-btn" onclick="teamNext()" aria-label="Next">→</button>
         </div>
         <div class="calendar-zoom-controls">
-            <button type="button" class="zoom-btn" onclick="zoomCalendar(-1)" title="Reducir zoom" aria-label="Reducir zoom">−</button>
+            <button type="button" class="zoom-btn" onclick="zoomCalendar(-1)" title="Zoom out" aria-label="Zoom out">−</button>
             <span class="zoom-label">Zoom</span>
-            <button type="button" class="zoom-btn" onclick="zoomCalendar(1)" title="Ampliar zoom" aria-label="Ampliar zoom">+</button>
+            <button type="button" class="zoom-btn" onclick="zoomCalendar(1)" title="Zoom in" aria-label="Zoom in">+</button>
         </div>
-        <button type="button" class="month-nav-btn month-nav-btn--accent" onclick="openVacationModal()">➕ Añadir vacaciones${selectedVacationDays.length ? ` (${selectedVacationDays.length})` : ''}</button>
+        <button type="button" class="month-nav-btn month-nav-btn--accent" onclick="openVacationModal()">+ Add leave${selectedVacationDays.length ? ` (${selectedVacationDays.length})` : ''}</button>
     </div>
     ${holidayCalendarStatus}
     <div class="calendar-help">
-        <p class="calendar-hint">Haz clic en un día de tu fila para marcar vacaciones. Con Ctrl+Clic seleccionas varios días y luego pulsas «Añadir vacaciones». Clic sobre un día ya marcado para eliminarlo.</p>
-        <ul class="calendar-legend" aria-label="Leyenda del calendario">
-            <li class="legend-filterable${vacationLegendFilter === 'current_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('current_year')" onkeydown="activateOnEnterOrSpace(event)" title="Resaltar solo Año actual"><span class="legend-swatch legend-swatch--current"></span>Año actual</li>
-            <li class="legend-filterable${vacationLegendFilter === 'previous_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('previous_year')" onkeydown="activateOnEnterOrSpace(event)" title="Resaltar solo Año anterior"><span class="legend-swatch legend-swatch--previous"></span>Año anterior</li>
-            <li class="legend-filterable${vacationLegendFilter === 'willis_choice' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('willis_choice')" onkeydown="activateOnEnterOrSpace(event)" title="Resaltar solo Willis Choice"><span class="legend-swatch legend-swatch--willis"></span>Willis Choice</li>
-            <li><span class="legend-swatch legend-swatch--selected"></span>Seleccionado</li>
-            <li><span class="legend-swatch legend-swatch--holiday"></span>Festivo</li>
-            <li><span class="legend-swatch legend-swatch--weekend"></span>Fin de semana</li>
-            <li><span class="legend-swatch legend-swatch--today"></span>Hoy</li>
+        <p class="calendar-hint">Click a day in your own row to mark leave. Ctrl+Click to select several days, then press “Add leave”. Click a marked day to remove it.</p>
+        <ul class="calendar-legend" aria-label="Calendar legend">
+            <li class="legend-filterable${vacationLegendFilter === 'current_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('current_year')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight current year only"><span class="legend-swatch legend-swatch--current"></span>Current year</li>
+            <li class="legend-filterable${vacationLegendFilter === 'previous_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('previous_year')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight previous year only"><span class="legend-swatch legend-swatch--previous"></span>Previous year</li>
+            <li class="legend-filterable${vacationLegendFilter === 'willis_choice' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('willis_choice')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight WTW Choice only"><span class="legend-swatch legend-swatch--willis"></span>WTW Choice</li>
+            <li><span class="legend-swatch legend-swatch--selected"></span>Selected</li>
+            <li><span class="legend-swatch legend-swatch--holiday"></span>Public holiday</li>
+            <li><span class="legend-swatch legend-swatch--weekend"></span>Weekend</li>
+            <li><span class="legend-swatch legend-swatch--today"></span>Today</li>
         </ul>
     </div>
 `;
 
+            // Calendar (per active mode)
+            if (teamViewMode === 'week') html += renderTeamWeekCalendar();
+            else if (teamViewMode === 'month') html += renderTeamMonthCalendar();
+            else html += renderMonthCalendar();
 
-            // Calendario
-            html += renderMonthCalendar();
-
-            // NUEVA SECCIÓN: Resumen de vacaciones
+            // Vacation summary
             html += renderVacationSummary();
 
             container.innerHTML = html;
-            // Aplicar el zoom actual tras cada render (las variables CSS se pierden al reescribir el DOM)
+            // Re-apply the zoom after each render (CSS vars are lost when the DOM is rewritten)
             applyZoom();
         }
 
+        // Builds a single calendar body cell for a member/date, with per-person
+        // holidays. `extra` adds view-specific classes (e.g. month-separator).
+        function buildTeamDayCell(member, date, extra = '') {
+            const dateKey = formatDateKey(date);
+            const todayKey = formatDateKey(new Date());
+            const dayOfWeek = date.getDay();
+            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+            const isHoliday = isHolidayForMember(member, dateKey);
 
+            const vacation = teamVacations.find(v =>
+                v.user_initials === member && dateKey >= v.start_date && dateKey <= v.end_date
+            );
+            const isSelected = selectedVacationDays.some(d => d.member === member && d.dateKey === dateKey);
+
+            let cellClass = extra;
+            if (isWeekend) cellClass += ' weekend';
+            if (isHoliday) cellClass += ' holiday';
+            if (isSelected) cellClass += ' vacation-selected';
+            if (dateKey === todayKey) cellClass += ' today-cell';
+            if (vacation) {
+                if (vacation.vacation_type === 'current_year') cellClass += ' vacation-current-year';
+                else if (vacation.vacation_type === 'previous_year') cellClass += ' vacation-previous-year';
+                else if (vacation.vacation_type === 'willis_choice') cellClass += ' vacation-willis-choice';
+                if (vacationLegendFilter && vacation.vacation_type !== vacationLegendFilter) cellClass += ' legend-dim';
+            }
+
+            const tooltip = `${member} · ${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}${isHoliday ? ' · Public holiday' : ''}${vacation ? ' · Leave' : ''}`;
+            return `<td class="${cellClass.trim()}" onclick="toggleVacation('${member}', '${dateKey}', event)" title="${tooltip}"></td>`;
+        }
+
+        // YEAR view: two stacked semesters (original layout).
         function renderMonthCalendar() {
             const year = currentMonth.getFullYear();
-            const todayKey = formatDateKey(new Date());
 
-            // Vista de 2 semestres apilados
             const semesters = [
-                { label: '1er Semestre', months: [0, 1, 2, 3, 4, 5] },
-                { label: '2º Semestre', months: [6, 7, 8, 9, 10, 11] }
+                { label: 'H1', months: [0, 1, 2, 3, 4, 5] },
+                { label: 'H2', months: [6, 7, 8, 9, 10, 11] }
             ];
 
             let html = '';
@@ -4791,15 +5118,15 @@ function sortDailyProjects(projects) {
     <div class="calendar-scroll-container">
     <table class="calendar-table calendar-table--compact">`;
 
-                // ===== THEAD: cabecera de meses + números de día =====
+                // THEAD: month labels + day numbers
                 html += `<thead><tr>`;
                 html += `<th class="name-column"></th>`;
 
                 semester.months.forEach((m, idx) => {
                     const daysInMonth = new Date(year, m + 1, 0).getDate();
-                    const monthName = new Date(year, m, 1).toLocaleDateString('es-ES', { month: 'long' });
+                    const monthName = new Date(year, m, 1).toLocaleDateString('en-GB', { month: 'long' });
                     const sep = idx > 0 ? ' month-separator' : '';
-                    html += `<th class="month-header${sep}" colspan="${daysInMonth}">${monthName.charAt(0).toUpperCase() + monthName.slice(1)}</th>`;
+                    html += `<th class="month-header${sep}" colspan="${daysInMonth}">${monthName}</th>`;
                 });
                 html += `</tr><tr>`;
                 html += `<th class="name-column"></th>`;
@@ -4816,60 +5143,90 @@ function sortDailyProjects(projects) {
                 });
                 html += `</tr></thead>`;
 
-                // ===== TBODY: filas de miembros =====
+                // TBODY: member rows
                 html += `<tbody>`;
-
                 teamMembers.forEach(member => {
-                    html += `<tr>`;
-                    html += `<td class="name-column">${member}</td>`;
-
+                    html += `<tr><td class="name-column">${member}</td>`;
                     semester.months.forEach((m, monthIndex) => {
                         const daysInMonth = new Date(year, m + 1, 0).getDate();
-
                         for (let day = 1; day <= daysInMonth; day++) {
-                            const date = new Date(year, m, day);
-                            const dateKey = formatDateKey(date);
-                            const dayOfWeek = date.getDay();
-                            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                            const isHoliday = madridHolidays.has(dateKey);
-
-                            const vacation = teamVacations.find(v =>
-                                v.user_initials === member &&
-                                dateKey >= v.start_date &&
-                                dateKey <= v.end_date
-                            );
-
-                            const isSelected = selectedVacationDays.some(
-                                d => d.member === member && d.dateKey === dateKey
-                            );
-
-                            let cellClass = '';
-                            if (isWeekend) cellClass += ' weekend';
-                            if (isHoliday) cellClass += ' holiday';
-                            if (day === 1 && monthIndex > 0) cellClass += ' month-separator';
-                            if (isSelected) cellClass += ' vacation-selected';
-                            if (dateKey === todayKey) cellClass += ' today-cell';
-                            if (vacation) {
-                                if (vacation.vacation_type === 'current_year') cellClass += ' vacation-current-year';
-                                else if (vacation.vacation_type === 'previous_year') cellClass += ' vacation-previous-year';
-                                else if (vacation.vacation_type === 'willis_choice') cellClass += ' vacation-willis-choice';
-
-                                if (vacationLegendFilter && vacation.vacation_type !== vacationLegendFilter) {
-                                    cellClass += ' legend-dim';
-                                }
-                            }
-
-                            const tooltip = `${member} · ${date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })}${vacation ? ' · Vacaciones' : ''}`;
-                            html += `<td class="${cellClass}" onclick="toggleVacation('${member}', '${dateKey}', event)" title="${tooltip}"></td>`;
+                            const extra = (day === 1 && monthIndex > 0) ? 'month-separator' : '';
+                            html += buildTeamDayCell(member, new Date(year, m, day), extra);
                         }
                     });
-
                     html += `</tr>`;
                 });
-
                 html += `</tbody></table><div class="today-line"></div></div></div>`;
             });
 
+            return html;
+        }
+
+        // MONTH view: one month, day columns.
+        function renderTeamMonthCalendar() {
+            const year = teamRefDate.getFullYear();
+            const m = teamRefDate.getMonth();
+            const daysInMonth = new Date(year, m + 1, 0).getDate();
+            const weekdayInitials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+            let html = `<div class="semester-block">
+    <div class="calendar-scroll-container">
+    <table class="calendar-table calendar-table--compact calendar-table--month">`;
+
+            // Weekday initials
+            html += `<thead><tr><th class="name-column"></th>`;
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dow = new Date(year, m, day).getDay();
+                const we = (dow === 0 || dow === 6) ? ' weekend-header' : '';
+                html += `<th class="day-header${we}">${weekdayInitials[dow]}</th>`;
+            }
+            html += `</tr><tr><th class="name-column"></th>`;
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dow = new Date(year, m, day).getDay();
+                const we = (dow === 0 || dow === 6) ? ' weekend-header' : '';
+                html += `<th class="day-header${we}">${day}</th>`;
+            }
+            html += `</tr></thead><tbody>`;
+
+            teamMembers.forEach(member => {
+                html += `<tr><td class="name-column">${member}</td>`;
+                for (let day = 1; day <= daysInMonth; day++) {
+                    html += buildTeamDayCell(member, new Date(year, m, day));
+                }
+                html += `</tr>`;
+            });
+            html += `</tbody></table><div class="today-line"></div></div></div>`;
+            return html;
+        }
+
+        // WEEK view: 7 days of the week containing teamRefDate.
+        function renderTeamWeekCalendar() {
+            const ws = getMonday(teamRefDate);
+            const days = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(ws); d.setDate(ws.getDate() + i); days.push(d);
+            }
+
+            let html = `<div class="semester-block">
+    <div class="calendar-scroll-container">
+    <table class="calendar-table calendar-table--week">`;
+
+            html += `<thead><tr><th class="name-column"></th>`;
+            days.forEach(d => {
+                const dow = d.getDay();
+                const we = (dow === 0 || dow === 6) ? ' weekend-header' : '';
+                const name = d.toLocaleDateString('en-GB', { weekday: 'short' });
+                const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                html += `<th class="week-day-header${we}">${name}<br><span class="week-day-date">${dateStr}</span></th>`;
+            });
+            html += `</tr></thead><tbody>`;
+
+            teamMembers.forEach(member => {
+                html += `<tr><td class="name-column">${member}</td>`;
+                days.forEach(d => { html += buildTeamDayCell(member, d); });
+                html += `</tr>`;
+            });
+            html += `</tbody></table><div class="today-line"></div></div></div>`;
             return html;
         }
 
@@ -4916,10 +5273,10 @@ function sortDailyProjects(projects) {
             return `
         <div class="vacation-summary">
             <div class="vacation-summary-heading">
-                <h3 class="summary-title">Consumo de vacaciones</h3>
+                <h3 class="summary-title">Leave usage</h3>
                 <label class="vacation-year-filter">
-                    <span>Año del consumo</span>
-                    <select aria-label="Año del consumo de vacaciones" onchange="setVacationBalanceYear(this.value)">
+                    <span>Usage year</span>
+                    <select aria-label="Leave usage year" onchange="setVacationBalanceYear(this.value)">
                         ${availableYears.map(year => `<option value="${year}" ${year === vacationBalanceYear ? 'selected' : ''}>${year}</option>`).join('')}
                     </select>
                 </label>
@@ -4937,11 +5294,11 @@ function sortDailyProjects(projects) {
                             <div class="vacation-balance-fill ${barColor}" style="width:${pct}%"></div>
                         </div>
                         <div class="vacation-balance-figure u-figure">${s.vacationDays.toFixed(1)}<span class="vacation-balance-max">/${STANDARD_VACATION_DAYS_PER_YEAR}</span></div>
-                        ${s.willisChoiceDays ? `<div class="vacation-balance-willis">+${s.willisChoiceDays.toFixed(1)} Willis</div>` : ''}
+                        ${s.willisChoiceDays ? `<div class="vacation-balance-willis">+${s.willisChoiceDays.toFixed(1)} WTW</div>` : ''}
                     </div>`;
                 }).join('')}
             </div>
-            <p class="chart-footnote">Barra de balance sobre ${STANDARD_VACATION_DAYS_PER_YEAR} días/año de referencia (ajustable). Willis Choice se muestra aparte, sin límite fijo.</p>
+            <p class="chart-footnote">Balance bar against ${STANDARD_VACATION_DAYS_PER_YEAR} reference days/year (adjustable). WTW Choice is shown separately, with no fixed cap.</p>
 
             ${buildVacationMonthDistributionHtml(vacationBalanceYear)}
         </div>
@@ -4965,12 +5322,12 @@ function sortDailyProjects(projects) {
             });
 
             const maxTotal = Math.max(...monthTotals, 1);
-            const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
             const bars = monthTotals.map((total, i) => {
                 const heightPct = Math.max(Math.round((total / maxTotal) * 100), total > 0 ? 6 : 0);
                 return `
-                <div class="vacation-month-bar-wrap" title="${monthNames[i]} ${year}: ${total} día(s)-persona">
+                <div class="vacation-month-bar-wrap" title="${monthNames[i]} ${year}: ${total} person-day(s)">
                     <div class="vacation-month-bar" style="height:${heightPct}%"></div>
                     <span class="vacation-month-bar-label">${monthNames[i]}</span>
                 </div>`;
@@ -4978,7 +5335,7 @@ function sortDailyProjects(projects) {
 
             return `
             <div class="vacation-month-distribution">
-                <h4 class="chart-title">📊 Concentración de ausencias por mes (${year})</h4>
+                <h4 class="chart-title">Leave concentration by month (${year})</h4>
                 <div class="vacation-month-bar-chart">${bars}</div>
             </div>`;
         }
@@ -5056,7 +5413,7 @@ function sortDailyProjects(projects) {
             sidebar.classList.toggle('collapsed', collapsed);
             if (btn) {
                 btn.textContent = collapsed ? '▶' : '◀';
-                btn.title = collapsed ? 'Expandir panel' : 'Contraer panel';
+                btn.title = collapsed ? 'Expand panel' : 'Collapse panel';
                 btn.setAttribute('aria-label', btn.title);
                 btn.setAttribute('aria-expanded', String(!collapsed));
             }
@@ -5086,7 +5443,7 @@ function sortDailyProjects(projects) {
             const sidebarToggle = document.getElementById('sidebarToggle');
             if (sidebarToggle) {
                 sidebarToggle.textContent = isOpen ? '×' : '◀';
-                sidebarToggle.title = isOpen ? 'Cerrar menú' : 'Contraer panel';
+                sidebarToggle.title = isOpen ? 'Close menu' : 'Collapse panel';
                 sidebarToggle.setAttribute('aria-label', sidebarToggle.title);
             }
             if (isOpen && sidebarToggle) sidebarToggle.focus();
@@ -5105,7 +5462,7 @@ function sortDailyProjects(projects) {
             const sidebarToggle = document.getElementById('sidebarToggle');
             if (sidebarToggle) {
                 sidebarToggle.textContent = '◀';
-                sidebarToggle.title = 'Contraer panel';
+                sidebarToggle.title = 'Collapse panel';
                 sidebarToggle.setAttribute('aria-label', sidebarToggle.title);
             }
             if (document.activeElement && sidebar.contains(document.activeElement)) menuButton.focus();
@@ -5113,7 +5470,7 @@ function sortDailyProjects(projects) {
 
         function toggleVacation(member, dateKey, event) {
             if (member !== currentUser) {
-                showToast('Solo puedes marcar tus propias vacaciones', 'warning');
+                showToast('You can only mark your own leave', 'warning');
                 return;
             }
 
@@ -5145,7 +5502,7 @@ function sortDailyProjects(projects) {
 
             // Si existe vacación, permitir eliminarla siempre
             if (existing) {
-                const confirmDelete = confirm(`¿Eliminar ${existing.days_count} día(s) de vacaciones?`);
+                const confirmDelete = confirm(`Remove ${existing.days_count} leave day(s)?`);
                 if (confirmDelete) {
                     deleteVacation(existing.id);
                 }
@@ -5154,7 +5511,7 @@ function sortDailyProjects(projects) {
 
             // Si NO es Ctrl+Clic y hay selecciones previas sin vacaciones, mostrar alerta
             if (selectedVacationDays.length > 0) {
-                showToast('Ya tienes días seleccionados. Usa el botón "Añadir vacaciones" para confirmar o haz Ctrl+Clic en los días para deseleccionarlos.', 'warning');
+                showToast('You already have days selected. Use the “Add leave” button to confirm, or Ctrl+Click the days to deselect them.', 'warning');
                 return;
             }
 
@@ -5173,11 +5530,11 @@ function sortDailyProjects(projects) {
 
             pendingVacationSelection = { member, dates: datesToAdd };
             typeSelect.innerHTML = `
-                <option value="current_year">Año actual (${currentYear})</option>
-                <option value="previous_year">Año anterior (${previousYear})</option>
-                <option value="willis_choice">Willis Choice (${currentYear})</option>
+                <option value="current_year">Current year (${currentYear})</option>
+                <option value="previous_year">Previous year (${previousYear})</option>
+                <option value="willis_choice">WTW Choice (${currentYear})</option>
             `;
-            selectionLabel.textContent = `${datesToAdd.length} ${datesToAdd.length === 1 ? 'día completo' : 'días completos'}`;
+            selectionLabel.textContent = `${datesToAdd.length} ${datesToAdd.length === 1 ? 'full day' : 'full days'}`;
             openModal('vacationOptionsModal', '#vacationTypeSelect');
         }
 
@@ -5203,8 +5560,28 @@ function sortDailyProjects(projects) {
         async function addVacationWithDateRange(member, dateKeysArray, vacationType, vacationYear) {
             if (!dateKeysArray || dateKeysArray.length === 0) return;
 
-            // Crear un registro independiente por cada día
-            // Esto permite borrar días individuales sin afectar a los demás
+            // Weekends and public holidays are non-working days, so they never
+            // count as leave: drop them before inserting.
+            const requested = dateKeysArray.length;
+            dateKeysArray = dateKeysArray.filter(dateKey => {
+                const d = new Date(dateKey + 'T00:00:00');
+                const dow = d.getDay();
+                if (dow === 0 || dow === 6) return false;
+                if (isHolidayForMember(member, dateKey)) return false;
+                return true;
+            });
+            selectedVacationDays = [];
+            if (dateKeysArray.length === 0) {
+                renderTeamView();
+                showToast('Those days are weekends or public holidays — not counted as leave.', 'info');
+                return;
+            }
+            if (dateKeysArray.length < requested) {
+                showToast(`${requested - dateKeysArray.length} weekend/holiday day(s) skipped (non-working days).`, 'info');
+            }
+
+            // One independent record per day so individual days can be removed
+            // without affecting the rest.
             const vacationRecords = dateKeysArray.map(dateKey => ({
                 user_initials: member,
                 start_date: dateKey,
@@ -5221,14 +5598,14 @@ function sortDailyProjects(projects) {
 
             if (error) {
                 console.error(error);
-                showToast('Error añadiendo vacación', 'error');
+                showToast('Error adding leave', 'error');
                 return;
             }
 
             selectedVacationDays = [];
             await loadTeamVacations();
             renderTeamView();
-            showToast(`${vacationRecords.length} día${vacationRecords.length === 1 ? '' : 's'} de vacaciones añadido${vacationRecords.length === 1 ? '' : 's'}`, 'success');
+            showToast(`${vacationRecords.length} leave day${vacationRecords.length === 1 ? '' : 's'} added`, 'success');
         }
 
         async function deleteVacation(vacationId) {
@@ -5239,13 +5616,13 @@ function sortDailyProjects(projects) {
 
             if (error) {
                 console.error(error);
-                showToast('Error eliminando vacación', 'error');
+                showToast('Error removing leave', 'error');
                 return;
             }
 
             await loadTeamVacations();
             renderTeamView();
-            showToast('Vacaciones eliminadas', 'success');
+            showToast('Leave removed', 'success');
         }
 
         async function loadTeamVacations() {
@@ -5264,7 +5641,7 @@ function sortDailyProjects(projects) {
 
         function openVacationModal() {
             if (selectedVacationDays.length === 0) {
-                showToast('Por favor, selecciona días usando Ctrl+Clic en el calendario', 'info');
+                showToast('Please select days using Ctrl+Click on the calendar', 'info');
                 return;
             }
 
@@ -5272,7 +5649,7 @@ function sortDailyProjects(projects) {
             const members = [...new Set(selectedVacationDays.map(d => d.member))];
 
             if (members.length > 1) {
-                showToast('Has seleccionado días de diferentes miembros del equipo. Por favor, selecciona solo tus días.', 'warning');
+                showToast('You have selected days from different team members. Please select only your own days.', 'warning');
                 return;
             }
 
@@ -5340,13 +5717,13 @@ function sortDailyProjects(projects) {
             const newPasswordConfirm = passwordConfirmInput.value || '';
 
             if (!newInitials) {
-                errorEl.textContent = 'Las iniciales son obligatorias.';
+                errorEl.textContent = 'Initials are required.';
                 initialsInput.focus();
                 return;
             }
 
             if (!newEmail || !newEmail.includes('@')) {
-                errorEl.textContent = 'Introduce un email válido.';
+                errorEl.textContent = 'Enter a valid email.';
                 emailInput.focus();
                 return;
             }
@@ -5354,19 +5731,19 @@ function sortDailyProjects(projects) {
             const currentInitials = normalizeInitials(currentUser);
             const existing = userDirectory[newInitials];
             if (existing && newInitials !== currentInitials) {
-                errorEl.textContent = `Ya existe otro usuario con iniciales ${newInitials}.`;
+                errorEl.textContent = `Another user with initials ${newInitials} already exists.`;
                 initialsInput.focus();
                 return;
             }
 
             if (newPassword || newPasswordConfirm) {
                 if (newPassword.length < 6) {
-                    errorEl.textContent = 'La contraseña debe tener al menos 6 caracteres.';
+                    errorEl.textContent = 'The password must be at least 6 characters.';
                     passwordInput.focus();
                     return;
                 }
                 if (newPassword !== newPasswordConfirm) {
-                    errorEl.textContent = 'La confirmación de contraseña no coincide.';
+                    errorEl.textContent = 'The password confirmation does not match.';
                     passwordConfirmInput.focus();
                     return;
                 }
@@ -5384,7 +5761,7 @@ function sortDailyProjects(projects) {
                     passwordHash: nextPasswordHash
                 });
             } catch (error) {
-                errorEl.textContent = error && error.message ? error.message : 'Error guardando ajustes.';
+                errorEl.textContent = error && error.message ? error.message : 'Error saving settings.';
                 return;
             }
 
@@ -5397,7 +5774,7 @@ function sortDailyProjects(projects) {
             renderActiveView();
             refreshOpenOverlays();
             closeUserSettingsModal();
-            showToast('Ajustes guardados', 'success');
+            showToast('Settings saved', 'success');
         }
 
         function clearLoginSession() {
@@ -5511,27 +5888,27 @@ function sortDailyProjects(projects) {
             if (!passwordInput || !loginButton || !loginError) return;
 
             if (!initialsInput) {
-                loginError.textContent = 'La pantalla de login está desactualizada. Recarga con Ctrl+F5.';
+                loginError.textContent = 'The login screen is out of date. Reload with Ctrl+F5.';
                 return;
             }
 
             loginError.textContent = '';
             loginButton.disabled = true;
-            loginButton.textContent = 'Entrando...';
+            loginButton.textContent = 'Signing in...';
 
             try {
                 await loadUserDirectory();
 
                 const enteredInitials = normalizeInitials(initialsInput.value);
                 if (!enteredInitials) {
-                    loginError.textContent = 'Introduce tus iniciales.';
+                    loginError.textContent = 'Enter your initials.';
                     initialsInput.focus();
                     return;
                 }
 
                 const profile = userDirectory[enteredInitials];
                 if (!profile) {
-                    loginError.textContent = 'Usuario no encontrado.';
+                    loginError.textContent = 'User not found.';
                     initialsInput.focus();
                     initialsInput.select();
                     return;
@@ -5542,7 +5919,7 @@ function sortDailyProjects(projects) {
                 const expectedHash = String(profile.passwordHash || await getDefaultPasswordHash());
 
                 if (enteredHash !== expectedHash) {
-                    loginError.textContent = 'Contraseña incorrecta.';
+                    loginError.textContent = 'Incorrect password.';
                     passwordInput.focus();
                     passwordInput.select();
                     return;
@@ -5554,12 +5931,12 @@ function sortDailyProjects(projects) {
                 persistLoginSession(currentUser);
                 await enterApplication();
             } catch (error) {
-                console.error('Error en login:', error);
-                const message = error && error.message ? error.message : 'Error inesperado en el login.';
-                loginError.textContent = `No se pudo iniciar sesión: ${message}`;
+                console.error('Login error:', error);
+                const message = error && error.message ? error.message : 'Unexpected error during login.';
+                loginError.textContent = `Could not sign in: ${message}`;
             } finally {
                 loginButton.disabled = false;
-                loginButton.textContent = 'Entrar';
+                loginButton.textContent = 'Sign in';
             }
         }
 

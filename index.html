@@ -8,13 +8,13 @@
     <script>
         try {
             var storedTheme = localStorage.getItem('pt_theme');
-            document.documentElement.setAttribute('data-theme', storedTheme === 'dark' ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', storedTheme === 'light' ? 'light' : 'dark');
         } catch (e) {}
     </script>
 	<link rel="icon" type="image/x-icon" href="calendar.ico">
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 	<link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.js"></script>
 </head>
@@ -40,9 +40,9 @@
     <div class="container">
         <div class="sidebar" id="sidebar">
             <button type="button" class="sidebar-toggle-btn" id="sidebarToggle" onclick="toggleSidebar()" title="Collapse panel" aria-label="Collapse panel" aria-expanded="true">◀</button>
-            <div class="sidebar-logo">WE AI</div>
-            <div class="sidebar-subtitle">Project Tracker</div>
-            <button type="button" class="btn-new-project" onclick="openNewProjectModal()">✨ New Project</button>
+            <div class="sidebar-logo">WTW</div>
+            <div class="sidebar-subtitle">WE AI IMPLEMENTATION ANALYSTS</div>
+            <button type="button" class="btn-new-project" onclick="openNewProjectModal()"><span class="btn-new-project-icon" aria-hidden="true">+</span> New Project</button>
 
             <div class="sidebar-content">
                 <button type="button" class="sidebar-title" id="sidebarTitleActivos" aria-expanded="true" aria-controls="projectsListActive" onclick="toggleSidebarSection('activos')">
@@ -63,7 +63,7 @@
 
             <!-- User Control -->
             <div class="user-control">
-                <div class="user-icon" aria-hidden="true">👤</div>
+                <div class="user-icon" aria-hidden="true">◍</div>
                 <div class="user-info">
                     <button type="button" class="user-change-btn" onclick="openUserSettingsModal()">Settings</button>
                     <button type="button" class="user-change-btn" onclick="logoutCurrentUser()">Logout</button>
@@ -79,22 +79,26 @@
                     <h2 id="viewTitle">Daily</h2>
                 </div>
                 <div class="view-toggle" role="group" aria-label="Views">
-                    <button type="button" class="active" data-view="daily" aria-pressed="true" onclick="switchView('daily')">📅 Daily</button>
-                    <button type="button" data-view="ficha" aria-pressed="false" onclick="switchView('ficha')">📋 Project Details</button>
-                    <button type="button" data-view="equipo" aria-pressed="false" onclick="switchView('equipo')">👥 Team</button>
-                    <button type="button" data-view="dashboard" aria-pressed="false" onclick="switchView('dashboard')">📈 Dashboard</button>
+                    <button type="button" class="active" data-view="daily" aria-pressed="true" onclick="switchView('daily')"><span class="view-ico" aria-hidden="true">◷</span> Daily</button>
+                    <button type="button" data-view="ficha" aria-pressed="false" onclick="switchView('ficha')"><span class="view-ico" aria-hidden="true">❏</span> Project Details</button>
+                    <button type="button" data-view="equipo" aria-pressed="false" onclick="switchView('equipo')"><span class="view-ico" aria-hidden="true">◎</span> Team</button>
+                    <button type="button" data-view="dashboard" aria-pressed="false" onclick="switchView('dashboard')"><span class="view-ico" aria-hidden="true">▚</span> Dashboard</button>
                 </div>
             </div>
 
             <div class="content-area">
                 <div class="daily-view active" id="dailyView" data-view="daily">
                     <div class="week-navigation">
-                        <button type="button" class="week-nav-btn" onclick="previousWeek()">← Previous Week</button>
+                        <div class="daily-range-toggle" role="group" aria-label="Daily range">
+                            <button type="button" id="btnDailyWeek" class="active" aria-pressed="true" onclick="setDailyRange('week')">Week</button>
+                            <button type="button" id="btnDailyMonth" aria-pressed="false" onclick="setDailyRange('month')">Month</button>
+                        </div>
+                        <button type="button" class="week-nav-btn" onclick="previousWeek()" aria-label="Previous">← Previous</button>
                         <div class="week-center">
                             <button type="button" class="week-nav-btn" id="todayBtn" onclick="goToday()">Today</button>
                             <div class="week-info" id="weekInfo" aria-live="polite"></div>
                         </div>
-                        <button type="button" class="week-nav-btn" onclick="nextWeek()">Next Week →</button>
+                        <button type="button" class="week-nav-btn" onclick="nextWeek()" aria-label="Next">Next →</button>
                     </div>
 
                     <div class="daily-mode-bar">
@@ -122,7 +126,7 @@
             </div>
         </div>
     </div>
-    <button class="sidebar-backdrop" id="sidebarBackdrop" type="button" aria-label="Cerrar menú de proyectos" onclick="closeMobileSidebar()"></button>
+    <button class="sidebar-backdrop" id="sidebarBackdrop" type="button" aria-label="Close projects menu" onclick="closeMobileSidebar()"></button>
 
     <div class="modal" id="dailyModal" data-dirty-check>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dailyModalTitle">
@@ -249,7 +253,7 @@
 
             <div class="form-group">
                 <label>Appearance</label>
-                <button type="button" id="themeToggleBtn" class="btn btn-secondary" aria-pressed="false" onclick="toggleTheme()">🌙 Dark mode</button>
+                <button type="button" id="themeToggleBtn" class="btn btn-secondary" aria-pressed="true" onclick="toggleTheme()">◑ Light mode</button>
             </div>
 
             <div class="modal-buttons">
@@ -283,6 +287,10 @@
             <div class="form-group">
                 <label for="projectStakeholders">Stakeholders</label>
                 <input type="text" id="projectStakeholders" placeholder="e.g.: John (Product Owner), Maria (IT), ...">
+            </div>
+            <div class="form-group">
+                <label for="projectCountry">Country</label>
+                <input type="text" id="projectCountry" placeholder="e.g.: France">
             </div>
             <div class="form-group">
                 <label for="volume">Savings (€)</label>
