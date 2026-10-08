@@ -3979,21 +3979,33 @@ function buildPhaseDonutHtml(projectsForChart) {
         return `<div class="chart-card"><h3 class="chart-title">Projects by Phase</h3><div class="chart-empty">No data to display.</div></div>`;
     }
 
-    const radius = 54;
-    const circumference = 2 * Math.PI * radius;
-    let offsetAccum = 0;
+    const radius = 70;
+    const cx = 70, cy = 70;
+    let startAngle = -Math.PI / 2;
 
-    const segments = counts.map(entry => {
+    const segments = counts.map((entry, idx) => {
         const fraction = entry.count / total;
-        const dash = fraction * circumference;
-        const seg = `<circle class="donut-segment ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-discovery'}" cx="70" cy="70" r="${radius}"
-            fill="none" stroke-width="20"
-            stroke-dasharray="${dash.toFixed(2)} ${(circumference - dash).toFixed(2)}"
-            stroke-dashoffset="${(-offsetAccum).toFixed(2)}"
-            transform="rotate(-90 70 70)">
+        const sliceAngle = fraction * 2 * Math.PI;
+        const endAngle = startAngle + sliceAngle;
+
+        const x1 = cx + radius * Math.cos(startAngle);
+        const y1 = cy + radius * Math.sin(startAngle);
+        const x2 = cx + radius * Math.cos(endAngle);
+        const y2 = cy + radius * Math.sin(endAngle);
+        const largeArc = sliceAngle > Math.PI ? 1 : 0;
+
+        const path = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+
+        const seg = `<path class="pie-segment ${PHASE_CHART_COLORS[entry.phase] || 'phase-color-discovery'}"
+            d="${path}"
+            style="cursor: pointer;"
+            onclick="toggleDashFilter('fases','${entry.phase}')"
+            onmouseover="showPieTooltip(event, '${escapeHtml(entry.phase)}', ${entry.count})"
+            onmouseout="hidePieTooltip()">
             <title>${escapeHtml(entry.phase)}: ${entry.count} (${Math.round(fraction * 100)}%)</title>
-        </circle>`;
-        offsetAccum += dash;
+        </path>`;
+
+        startAngle = endAngle;
         return seg;
     }).join('');
 
@@ -4011,14 +4023,26 @@ function buildPhaseDonutHtml(projectsForChart) {
     <div class="chart-card">
         <h3 class="chart-title">📋 Projects by Phase</h3>
         <div class="donut-chart-body">
-            <svg viewBox="0 0 140 140" class="donut-svg" role="img" aria-label="Project distribution by phase">
+            <svg viewBox="0 0 140 140" class="donut-svg pie-chart" role="img" aria-label="Project distribution by phase">
                 ${segments}
-                <text x="70" y="65" text-anchor="middle" class="donut-center-value u-figure">${total}</text>
-                <text x="70" y="82" text-anchor="middle" class="donut-center-label u-kicker">Projects</text>
             </svg>
+            <div id="pieTooltip" class="pie-tooltip" style="display:none;"></div>
             <ul class="donut-legend">${legend}</ul>
         </div>
     </div>`;
+}
+
+function showPieTooltip(event, phase, count) {
+    const tooltip = document.getElementById('pieTooltip');
+    tooltip.textContent = `${phase}: ${count} project${count !== 1 ? 's' : ''}`;
+    tooltip.style.display = 'block';
+    tooltip.style.left = event.pageX + 'px';
+    tooltip.style.top = (event.pageY - 30) + 'px';
+}
+
+function hidePieTooltip() {
+    const tooltip = document.getElementById('pieTooltip');
+    tooltip.style.display = 'none';
 }
 
 function buildSavingsHistogramHtml(projectsForChart) {

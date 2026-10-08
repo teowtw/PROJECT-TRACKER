@@ -3999,6 +3999,30 @@ button:disabled {
     opacity: 0.9;
 }
 
+.pie-chart .pie-segment {
+    transition: opacity 160ms var(--ease-out), filter 160ms var(--ease-out);
+    cursor: pointer;
+}
+
+.pie-chart .pie-segment:hover {
+    opacity: 0.85;
+    filter: brightness(1.1);
+}
+
+.pie-tooltip {
+    position: fixed;
+    background: var(--color-ink);
+    color: var(--color-surface);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    pointer-events: none;
+    z-index: 1000;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    white-space: nowrap;
+}
+
 .donut-center-value {
     font-size: 20px;
     font-weight: 700;
@@ -5971,15 +5995,15 @@ button:disabled {
     border-color: var(--color-accent);
 }
 
-/* ----- Phase colours (donut segments + legend swatches) ----- */
-/* Categorical palette: distinct hues for each project phase */
-.phase-color-discovery   { fill: #06B6D4; stroke: #06B6D4; background: #06B6D4; }
-.phase-color-design      { fill: #10B981; stroke: #10B981; background: #10B981; }
-.phase-color-development { fill: #F59E0B; stroke: #F59E0B; background: #F59E0B; }
-.phase-color-testing     { fill: #EF4444; stroke: #EF4444; background: #EF4444; }
-.phase-color-pilot       { fill: #8B5CF6; stroke: #8B5CF6; background: #8B5CF6; }
-.phase-color-production  { fill: #059669; stroke: #059669; background: #059669; }
-.phase-color-hypercare   { fill: #DC2626; stroke: #DC2626; background: #DC2626; }
+/* ----- Phase colours (pie segments + legend swatches) ----- */
+/* WTW Brand palette */
+.phase-color-discovery   { fill: #2B9BA8; stroke: #2B9BA8; background: #2B9BA8; }
+.phase-color-design      { fill: #00A380; stroke: #00A380; background: #00A380; }
+.phase-color-development { fill: #FFAA3A; stroke: #FFAA3A; background: #FFAA3A; }
+.phase-color-testing     { fill: #E74857; stroke: #E74857; background: #E74857; }
+.phase-color-pilot       { fill: #CCFF00; stroke: #CCFF00; background: #CCFF00; }
+.phase-color-production  { fill: #009966; stroke: #009966; background: #009966; }
+.phase-color-hypercare   { fill: #C82333; stroke: #C82333; background: #C82333; }
 .phase-color-bau         { fill: #6B7280; stroke: #6B7280; background: #6B7280; }
 /* Outcome phases reuse the semantic status tokens */
 .phase-color-completed   { fill: var(--color-positive); stroke: var(--color-positive); background: var(--color-positive); }
