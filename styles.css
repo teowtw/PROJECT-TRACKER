@@ -5996,14 +5996,14 @@ button:disabled {
 }
 
 /* ----- Phase colours (pie segments + legend swatches) ----- */
-/* WTW Brand palette */
-.phase-color-discovery   { fill: #2B9BA8; stroke: #2B9BA8; background: #2B9BA8; }
-.phase-color-design      { fill: #00A380; stroke: #00A380; background: #00A380; }
-.phase-color-development { fill: #FFAA3A; stroke: #FFAA3A; background: #FFAA3A; }
-.phase-color-testing     { fill: #E74857; stroke: #E74857; background: #E74857; }
-.phase-color-pilot       { fill: #CCFF00; stroke: #CCFF00; background: #CCFF00; }
-.phase-color-production  { fill: #009966; stroke: #009966; background: #009966; }
-.phase-color-hypercare   { fill: #C82333; stroke: #C82333; background: #C82333; }
+/* WTW Brand palette - Lilac & Purple tones */
+.phase-color-discovery   { fill: #E6D5F7; stroke: #E6D5F7; background: #E6D5F7; }
+.phase-color-design      { fill: #D4B5F0; stroke: #D4B5F0; background: #D4B5F0; }
+.phase-color-development { fill: #C294E8; stroke: #C294E8; background: #C294E8; }
+.phase-color-testing     { fill: #A970DC; stroke: #A970DC; background: #A970DC; }
+.phase-color-pilot       { fill: #8D4FCC; stroke: #8D4FCC; background: #8D4FCC; }
+.phase-color-production  { fill: #7A3DB8; stroke: #7A3DB8; background: #7A3DB8; }
+.phase-color-hypercare   { fill: #5F2E8F; stroke: #5F2E8F; background: #5F2E8F; }
 .phase-color-bau         { fill: #6B7280; stroke: #6B7280; background: #6B7280; }
 /* Outcome phases reuse the semantic status tokens */
 .phase-color-completed   { fill: var(--color-positive); stroke: var(--color-positive); background: var(--color-positive); }
