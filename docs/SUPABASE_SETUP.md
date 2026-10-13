@@ -20,6 +20,37 @@ No necesitas la **service_role** key para esta app — ver aviso de seguridad m�
 3. Abre otra **New query**, pega el contenido de [`supabase/seed.sql`](../supabase/seed.sql) y pulsa **Run**.
    Esto siembra únicamente la tabla `app_users` con las 5 personas del equipo y la contraseña inicial compartida `WEai2026!` (ya hasheada). No se siembra ningún dato de proyectos: el proyecto nuevo arranca vacío.
 
+## 2b. Aplicar las migraciones
+
+`supabase/schema.sql` es la foto del esquema original, no se actualiza con cada
+cambio. Después de ejecutarlo hay que pasar las migraciones **en este orden**,
+cada una en su propia **New query**. Todas son idempotentes: se pueden volver a
+pegar enteras sin romper nada.
+
+| Orden | Fichero | Qué añade |
+|---|---|---|
+| 1 | [`migrations_weekly_incidents.sql`](../migrations_weekly_incidents.sql) | `project_weekly_tasks` y `project_incidents` |
+| 2 | [`migrations_description_country_priority.sql`](../migrations_description_country_priority.sql) | `projects.description`, `projects.country`, prioridad `Crítica` y el vocabulario nuevo de fases (`Discovery`…`On Hold`) |
+| 3 | [`migrations_day_tasks.sql`](../migrations_day_tasks.sql) | `day_tasks`: tareas de día compartidas y asignables (las que se ven en el modal del botón «+» de la cabecera de cada día en el Daily) |
+| 4 | [`migrations_capacity_tasks_archive.sql`](../migrations_capacity_tasks_archive.sql) | Archivado y papelera de proyectos (`projects.archived_at` / `deleted_at`), jornada semanal por persona (`app_users.weekly_hours`), horas y varios responsables por tarea (`daily_comments.responsibles` / `estimated_hours` / `hours_by_assignee` / `description`, y lo mismo en `day_tasks`), y la tabla `user_capacity_overrides` |
+
+> La migración 4 deja obsoleta la tabla `project_capacities` (capacidad manual
+> en % por proyecto). No se borra, para no perder el histórico, pero la app ya
+> no la lee: la capacidad se calcula a partir de las horas de las tareas. Si
+> algún día quieres recuperar el espacio, `DROP TABLE project_capacities` es
+> seguro una vez verificado que nadie consulta ese histórico.
+
+Si la app ya está en marcha contra un proyecto existente, basta con ejecutar las
+migraciones que falten; las ya aplicadas no hacen nada la segunda vez.
+
+> **Si una migración falla, no se ha aplicado nada.** El SQL Editor de Supabase
+> ejecuta el script entero en una transacción, así que un error a mitad aborta
+> todo y la base queda como estaba. Corrige y vuelve a pegar el fichero
+> completo; no hace falta limpiar nada a mano.
+>
+> La migración 4 es autosuficiente: si `day_tasks` no existe (porque la 3 no se
+> pasó), la crea ella misma. Las 1, 2 y 3 sí esperan el orden.
+
 ## 3. Apuntar la app al proyecto nuevo
 
 Edita `config.js` y sustituye estas dos líneas con la URL y la anon key del proyecto nuevo:

@@ -105,6 +105,12 @@ let projectNoteEditorState = {
 let weeklyTasks = [];
 let incidents = [];
 let dayPersonalTasks = [];
+// Tareas de día compartidas del equipo (tabla day_tasks). Ver
+// migrations_day_tasks.sql.
+let dayTasks = [];
+// Overrides manuales de capacidad por (persona, semana). Ver
+// migrations_capacity_tasks_archive.sql.
+let capacityOverrides = [];
 let currentUser = null;
 const APP_LOGIN_PASSWORD = 'WEai2026!';
 const APP_LOGIN_STORAGE_KEY = 'wtw_login_session_v1';
@@ -112,6 +118,8 @@ const APP_CURRENT_USER_STORAGE_KEY = 'wtw_current_user';
 const APP_USERS_STORAGE_KEY = 'wtw_user_directory_v1';
 const APP_USERS_TABLE = 'app_users';
 const DAY_PERSONAL_TASKS_TABLE = 'day_personal_tasks';
+const DAY_TASKS_TABLE = 'day_tasks';
+const CAPACITY_OVERRIDES_TABLE = 'user_capacity_overrides';
 const APP_LOGIN_EXPIRY_DAYS = 30;
 // Equipo WE AI Implementation Analysts. Contraseña inicial compartida (ver
 // APP_LOGIN_PASSWORD); cada persona puede cambiarla luego desde su perfil.
@@ -134,6 +142,16 @@ function normalizeInitials(value) {
 
 function normalizeEmail(value) {
     return (value || '').trim().toLowerCase();
+}
+
+// Jornada semanal de una persona, saneada. Es el denominador de todos
+// los porcentajes de capacidad, así que un 0 o una cadena vacía
+// provocaría divisiones por cero: se cae al valor por defecto.
+// El tope son las horas que tiene una semana.
+function normalizeWeeklyHours(value) {
+    const hours = Number(value);
+    if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_WEEKLY_HOURS;
+    return Math.min(hours, 168);
 }
 
 async function hashTextSha256(value) {
@@ -172,7 +190,8 @@ async function buildDefaultUserDirectory() {
         directory[user.initials] = {
             initials: user.initials,
             email: user.email,
-            passwordHash: hash
+            passwordHash: hash,
+            weeklyHours: DEFAULT_WEEKLY_HOURS
         };
     });
     return directory;
@@ -189,7 +208,8 @@ function normalizeUserDirectory(rawDirectory) {
         normalized[initials] = {
             initials,
             email: normalizeEmail(row.email || getDefaultEmailByInitials(initials)),
-            passwordHash: String(row.passwordHash || row.password_hash || '')
+            passwordHash: String(row.passwordHash || row.password_hash || ''),
+            weeklyHours: normalizeWeeklyHours(row.weeklyHours !== undefined ? row.weeklyHours : row.weekly_hours)
         };
     });
 
@@ -231,7 +251,7 @@ async function loadUserDirectory() {
 
     const { data, error } = await supabaseClient
         .from(APP_USERS_TABLE)
-        .select('initials,email,password_hash')
+        .select('initials,email,password_hash,weekly_hours')
         .order('initials', { ascending: true });
 
     if (!error) {
@@ -243,7 +263,8 @@ async function loadUserDirectory() {
                 supabaseDirectory[initials] = {
                     initials,
                     email: normalizeEmail(row.email || getDefaultEmailByInitials(initials)),
-                    passwordHash: String(row.password_hash || '')
+                    passwordHash: String(row.password_hash || ''),
+                    weeklyHours: normalizeWeeklyHours(row.weekly_hours)
                 };
             });
             userDirectory = normalizeUserDirectory(supabaseDirectory);
@@ -254,6 +275,7 @@ async function loadUserDirectory() {
             const rows = Object.values(defaults).map(u => ({
                 initials: u.initials,
                 email: u.email,
+                weekly_hours: u.weeklyHours,
                 password_hash: u.passwordHash
             }));
 
@@ -302,7 +324,8 @@ async function saveUserProfile(oldInitials, profile) {
     userDirectory[newKey] = {
         initials: newKey,
         email: normalizeEmail(profile.email),
-        passwordHash: String(profile.passwordHash || '')
+        passwordHash: String(profile.passwordHash || ''),
+        weeklyHours: normalizeWeeklyHours(profile.weeklyHours)
     };
 
     saveUserDirectoryToLocalStorage();
@@ -314,7 +337,8 @@ async function saveUserProfile(oldInitials, profile) {
             .upsert({
                 initials: newKey,
                 email: normalizeEmail(profile.email),
-                password_hash: String(profile.passwordHash || '')
+                password_hash: String(profile.passwordHash || ''),
+                weekly_hours: normalizeWeeklyHours(profile.weeklyHours)
             }, { onConflict: 'initials' });
 
         if (upsertError) {
@@ -381,7 +405,9 @@ const MODAL_CLOSE_HANDLERS = {
     dayPersonalTasksModal: () => closeDayPersonalTasksModal(),
     vacationOptionsModal: () => closeVacationOptionsModal(),
     userSettingsModal: () => closeUserSettingsModal(),
-    projectModal: () => closeProjectModal()
+    projectModal: () => closeProjectModal(),
+    renameProjectModal: () => closeRenameProjectModal(),
+    taskDetailModal: () => closeTaskDetailModal()
 };
 const modalOpenerStack = [];
 
@@ -454,7 +480,11 @@ function handleIndicatorKey(event, type) {
 let sidebarCollapsed = {
     activos: false,
     bau: false,
-    completados: false
+    completados: false,
+    // Archivados y papelera arrancan plegados: son secciones de consulta,
+    // no de trabajo diario.
+    archivados: true,
+    eliminados: true
 };
 
 // Fases heredadas de un vocabulario antiguo -> fase actual (PROJECT_PHASES)
@@ -465,18 +495,227 @@ const LEGACY_PHASE_MAP = {
     'Mantenimiento': 'BAU'
 };
 
-// Grupo de trabajo de un proyecto: activos (en curso), bau (lo mantenemos nosotros) o completados
+// Grupo de trabajo de un proyecto. El archivado se comprueba ANTES de la
+// fase: un proyecto archivado sale de Activos/BAU/Completados y pasa a su
+// propia sección, conserve la fase que conserve.
 function getProjectGroup(project) {
+    if (isProjectArchived(project)) return 'archivados';
     const phase = project && project.phase;
     if (phase === 'Completed' || phase === 'Cancelled') return 'completados';
     if (phase === 'BAU') return 'bau';
     return 'activos';
 }
 
+// =====================================================
+// ========= PROYECTOS: ARCHIVADO Y PAPELERA ===========
+//
+// `projects` contiene solo los proyectos NO borrados (vivos +
+// archivados). Los de la papelera viven aparte, en deletedProjects.
+// Se hace así a propósito: cualquier vista, filtro o selector que ya
+// recorría `projects` sigue funcionando sin poder colar por descuido
+// un proyecto que el usuario ha tirado. Para que reaparezca hay que
+// restaurarlo explícitamente.
+//
+// El archivado sí se queda en `projects`, porque getProjectGroup() lo
+// desvía a su propia sección y sus horas históricas deben seguir
+// contando en la capacidad de las semanas pasadas.
+// =====================================================
+
+let deletedProjects = [];
+
+function isProjectArchived(project) {
+    return !!(project && project.archivedAt);
+}
+
+// Proyectos "vivos": ni archivados ni en la papelera. Es lo que deben
+// usar el dashboard y los selectores al crear algo nuevo.
+function getLiveProjects() {
+    return projects.filter(p => !isProjectArchived(p));
+}
+
+// Busca en vivos, archivados y papelera. La ficha la necesita para
+// poder abrir un proyecto archivado o restaurado.
+function findAnyProject(projectId) {
+    return projects.find(p => p.id === projectId)
+        || deletedProjects.find(p => p.id === projectId)
+        || null;
+}
+
 function countOpenIncidents(projectId) {
     return (incidents || []).filter(i => i.projectId === projectId && !i.resolved).length;
 }
 
+// =====================================================
+// ============== CAPACIDAD POR HORAS ==================
+//
+// Única fuente de verdad para "cuántas horas tiene X esta semana".
+// La usan el widget de la ficha de proyecto y la tabla del dashboard,
+// así que los dos números no pueden discrepar por construcción.
+//
+// Modelo:
+//   - Una tarea (daily_comments o day_tasks) tiene estimated_hours =
+//     esfuerzo TOTAL, y una lista de responsables.
+//   - Por defecto las horas se reparten a partes iguales entre los
+//     responsables. hours_by_assignee permite un reparto explícito
+//     {"TB": 8, "JG": 2} cuando la realidad no es simétrica (lo que
+//     se estimó en 5 h acabó siendo 8 para uno y 2 para el otro).
+//   - La semana de una tarea es la del lunes de su fecha.
+//   - Cuentan las completadas además de las pendientes: el objetivo
+//     es ver la carga ASIGNADA a la semana, no lo que falta. Las
+//     pendientes se calculan aparte para poder mostrarlas al lado.
+//   - Un override manual en user_capacity_overrides gana al cálculo.
+//
+// Limitación conocida y deliberada: las tareas personales de otras
+// personas no están en memoria (loadDataFromSupabase las filtra por
+// privacidad), así que sus horas no suman en la capacidad que tú ves.
+// Son to-dos privados por diseño; no se puede tener las dos cosas.
+// =====================================================
+
+const DEFAULT_WEEKLY_HOURS = 40;
+
+// Jornada semanal de una persona: el denominador de todos los %.
+function getUserWeeklyHours(initials) {
+    const profile = userDirectory[normalizeInitials(initials)];
+    const hours = Number(profile && profile.weeklyHours);
+    return Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_WEEKLY_HOURS;
+}
+
+// Responsables de una tarea, venga de donde venga. Acepta los tres
+// formatos que existen en la base: responsibles[] (daily_comments
+// actual), assignees[] (day_tasks) y responsible como texto único
+// (daily_comments heredados que la migración no tocó).
+function getTaskAssignees(task) {
+    if (!task) return [];
+    if (Array.isArray(task.responsibles) && task.responsibles.length) return task.responsibles;
+    if (Array.isArray(task.assignees) && task.assignees.length) return task.assignees;
+    const single = normalizeInitials(task.responsible || '');
+    return single ? [single] : [];
+}
+
+// Reparto explícito de horas, saneado: claves en mayúsculas y valores
+// numéricos >= 0. Llega como jsonb, así que puede traer cualquier cosa.
+function normalizeHoursByAssignee(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    Object.keys(raw).forEach(key => {
+        const initials = normalizeInitials(key);
+        const hours = Number(raw[key]);
+        if (!initials || !Number.isFinite(hours) || hours < 0) return;
+        out[initials] = hours;
+    });
+    return out;
+}
+
+// Horas que una tarea carga sobre `user`. 0 si no es responsable.
+function getTaskHoursForUser(task, user) {
+    const assignees = getTaskAssignees(task);
+    const key = normalizeInitials(user);
+    if (!assignees.includes(key)) return 0;
+
+    // Reparto explícito, si lo hay para esta persona.
+    const map = task.hoursByAssignee || {};
+    if (Object.prototype.hasOwnProperty.call(map, key)) {
+        const explicit = Number(map[key]);
+        if (Number.isFinite(explicit)) return Math.max(0, explicit);
+    }
+
+    const total = Number(task.estimatedHours) || 0;
+    if (total <= 0 || !assignees.length) return 0;
+    return total / assignees.length;
+}
+
+// Total real de una tarea = lo que carga a cada responsable sumado.
+// Con reparto personalizado puede no coincidir con estimatedHours,
+// así que esto es lo que hay que mostrar como "total".
+function getTaskTotalHours(task) {
+    return getTaskAssignees(task).reduce((sum, u) => sum + getTaskHoursForUser(task, u), 0);
+}
+
+function getWeekKeyForDateKey(dateKey) {
+    const parsed = parseDateKeyToDate(dateKey);
+    return parsed ? formatDateKey(getMonday(parsed)) : null;
+}
+
+// Tareas que caen en la semana indicada. Las respuestas de un hilo
+// (parentId) no son tareas y no cuentan horas.
+function getTasksForWeek(weekKey) {
+    const comments = (dailyComments || [])
+        .filter(c => !c.parentId && getWeekKeyForDateKey(c.date) === weekKey);
+    const teamDayTasks = (dayTasks || [])
+        .filter(t => getWeekKeyForDateKey(t.date) === weekKey);
+    return comments.concat(teamDayTasks);
+}
+
+// Carga de una semana, por persona. Siempre devuelve entrada para
+// todo el equipo, aunque no tenga nada asignado, para que el widget
+// pueda pintar la plantilla completa.
+function computeWeekCapacity(weekKey) {
+    const blank = (user, extra) => Object.assign({
+        user,
+        baselineHours: getUserWeeklyHours(user),
+        taskHours: 0,
+        pendingHours: 0,
+        taskCount: 0,
+        byProject: {},
+        overrideHours: null,
+        note: ''
+    }, extra || {});
+
+    const result = {};
+    teamMembers.forEach(user => { result[user] = blank(user); });
+
+    getTasksForWeek(weekKey).forEach(task => {
+        getTaskAssignees(task).forEach(user => {
+            // Alguien que ya no está en el directorio puede seguir
+            // apareciendo en tareas antiguas: se le crea entrada para
+            // que esas horas no desaparezcan del total del equipo.
+            if (!result[user]) result[user] = blank(user, { formerMember: true });
+
+            const hours = getTaskHoursForUser(task, user);
+            if (hours <= 0) return;
+
+            const entry = result[user];
+            entry.taskHours += hours;
+            entry.taskCount += 1;
+            if (!task.completed) entry.pendingHours += hours;
+
+            const projectKey = task.projectId || '__none__';
+            entry.byProject[projectKey] = (entry.byProject[projectKey] || 0) + hours;
+        });
+    });
+
+    Object.keys(result).forEach(user => {
+        const entry = result[user];
+        const override = (capacityOverrides || []).find(o =>
+            o.userInitials === user && o.weekStart === weekKey
+        );
+        if (override) {
+            entry.overrideHours = Number(override.overrideHours) || 0;
+            entry.note = override.note || '';
+        }
+        entry.effectiveHours = entry.overrideHours !== null ? entry.overrideHours : entry.taskHours;
+        entry.percent = entry.baselineHours > 0
+            ? Math.round((entry.effectiveHours / entry.baselineHours) * 100)
+            : 0;
+    });
+
+    return result;
+}
+
+// "7,5 h" sin decimales inútiles: 8 -> "8", 7.5 -> "7.5".
+function formatHours(value) {
+    const hours = Number(value) || 0;
+    const rounded = Math.round(hours * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+// Clase de color compartida por el widget y el dashboard, para que
+// "sobrecargado" signifique lo mismo en los dos sitios.
+function capacityLoadClass(percent) {
+    if (percent > 100) return 'overcapacity';
+    if (percent >= 80) return 'high-capacity';
+    return '';
+}
 function escapeHtml(text) {
     if (!text) return '';
     const map = {
@@ -968,15 +1207,55 @@ function setDashboardFilter(field, value) {
             el.textContent = `${startStr} - ${endStr}`;
         }
 
+        // Owners ticked in the "New Project" modal. Held outside the DOM so
+        // the picker can be re-rendered on every click without losing state.
+        let newProjectOwners = [];
+
         function openNewProjectModal() {
+            // Pre-select the creator: they are almost always an owner, and the
+            // Daily owner filter keys off this list.
+            const creator = normalizeInitials(currentUser || '');
+            newProjectOwners = (creator && teamMembers.includes(creator)) ? [creator] : [];
+            renderNewProjectOwners();
             openModal('projectModal', '#projectName');
+        }
+
+        function renderNewProjectOwners() {
+            const host = document.getElementById('projectOwners');
+            if (!host) return;
+
+            const options = teamMembers.filter(m => !isExcludedResponsible(m));
+            if (!options.length) {
+                host.innerHTML = '<p class="owner-picker-hint">No team members available.</p>';
+                return;
+            }
+
+            host.innerHTML = options.map(member => {
+                const on = newProjectOwners.includes(member);
+                return `<button type="button"
+                        class="owner-picker-btn${on ? ' is-selected' : ''}"
+                        aria-pressed="${on}"
+                        title="${on ? 'Remove' : 'Add'} ${escapeHtml(member)}"
+                        onclick="toggleNewProjectOwner(${jsArg(member)})">
+                        <span class="owner-picker-check" aria-hidden="true">${on ? '✓' : '+'}</span>${escapeHtml(member)}
+                    </button>`;
+            }).join('');
+        }
+
+        function toggleNewProjectOwner(member) {
+            newProjectOwners = newProjectOwners.includes(member)
+                ? newProjectOwners.filter(m => m !== member)
+                : [...newProjectOwners, member];
+            renderNewProjectOwners();
         }
 
         function closeProjectModal() {
             closeModal('projectModal');
 
             // Limpiar campos de forma SEGURA (solo si existen)
-            const fields = ['projectName', 'projectStartDate', 'projectEndDate', 'volume', 'fte', 'projectStakeholders', 'projectPhase'];
+            // projectCountry se añadió a la lista: antes se quedaba con el
+            // valor del proyecto anterior al crear dos seguidos.
+            const fields = ['projectName', 'projectStartDate', 'projectEndDate', 'volume', 'fte', 'projectStakeholders', 'projectCountry', 'projectPhase'];
             fields.forEach(id => {
                 const input = document.getElementById(id);
                 if (input) {
@@ -987,51 +1266,159 @@ function setDashboardFilter(field, value) {
                     }
                 }
             });
+
+            newProjectOwners = [];
+            renderNewProjectOwners();
         }
 
-        function openResponsiblesPopover(projectId) {
+        // =====================================================
+        // =============== RENOMBRAR PROYECTO ==================
+        // =====================================================
+
+        let renamingProjectId = null;
+
+        function openRenameProjectModal(projectId) {
             const project = projects.find(p => p.id === projectId);
             if (!project) return;
-            
-            const current = project.responsibles || [];
-            const available = teamMembers.filter(m => !current.includes(m));
-            
-            if (available.length === 0) {
-                showToast('All owners are already assigned', 'info');
+
+            renamingProjectId = projectId;
+            const input = document.getElementById('renameProjectInput');
+            if (input) {
+                input.value = project.name || '';
+                // Preselect so typing replaces the old name straight away.
+                setTimeout(() => input.select(), 0);
+            }
+            openModal('renameProjectModal', '#renameProjectInput');
+        }
+
+        function closeRenameProjectModal() {
+            closeModal('renameProjectModal');
+            renamingProjectId = null;
+        }
+
+        // Renombrado en línea desde la ficha: el título es un input, igual
+        // que la descripción. Se dispara en onchange (blur o Enter), no en
+        // cada tecla, para no escribir en Supabase por cada letra.
+        async function renameProjectInline(projectId, input) {
+            if (!input) return;
+            const project = findAnyProject(projectId);
+            if (!project) return;
+
+            const name = input.value.trim();
+            if (!name) {
+                // Un nombre vacío dejaría el proyecto sin identificar en el
+                // sidebar: se revierte y se avisa.
+                input.value = project.name;
+                showToast('The project name cannot be empty.', 'warning');
                 return;
             }
-            
-            // Crear un popover con botones clicables
-            const popoverId = `resp-popover-${projectId}`;
-            let existing = document.getElementById(popoverId);
-            if (existing) existing.remove();
-            
+            if (name === project.name) return;
+
+            await updateProjectField(projectId, 'name', name);
+            input.value = name;
+            renderProjectsList();
+            showToast('Project renamed', 'success', { key: 'autosave', duration: 1500 });
+        }
+
+        async function saveProjectRename() {
+            const input = document.getElementById('renameProjectInput');
+            if (!input || !renamingProjectId) return;
+
+            const name = input.value.trim();
+            if (!name) {
+                showToast('Enter the project name.', 'warning');
+                input.focus();
+                return;
+            }
+
+            const projectId = renamingProjectId;
+            const project = projects.find(p => p.id === projectId);
+            if (!project) {
+                closeRenameProjectModal();
+                return;
+            }
+
+            if (name === project.name) {
+                closeRenameProjectModal();
+                return;
+            }
+
+            // Close before saving so the modal dirty-check does not ask about
+            // the change we are in the middle of committing.
+            closeRenameProjectModal();
+
+            await updateProjectField(projectId, 'name', name);
+            renderProjectsList();
+            renderActiveView();
+            showToast('Project renamed', 'success');
+        }
+
+        // Safe argument for an inline on* handler: JSON-quotes the value and
+        // then HTML-escapes it, so an apostrophe in user data (initials, task
+        // text, project names) cannot break out of the attribute and silently
+        // kill the handler. Use this instead of writing '${value}' by hand.
+        function jsArg(value) {
+            return escapeHtml(JSON.stringify(value === undefined || value === null ? '' : String(value)));
+        }
+
+        // Owner picker. Every team member is a toggle, so the same popover
+        // adds and removes. It used to only list members who were NOT yet
+        // owners and bail out with "all owners are already assigned" once
+        // everybody was on, which left no way to take someone off except the
+        // tiny cross on the badge.
+        function openResponsiblesPopover(projectId) {
+            const alreadyOpen = !!document.getElementById(`resp-popover-${projectId}`);
+            closeResponsiblesPopover();
+            // Second click on the same "+" closes it again.
+            if (alreadyOpen) return;
+            showResponsiblesPopover(projectId);
+        }
+
+        function showResponsiblesPopover(projectId) {
+            const project = projects.find(p => p.id === projectId);
+            if (!project) return;
+
+            // Resolve the anchor BEFORE touching the DOM. The old version
+            // appended the popover and then returned early when the anchor was
+            // missing, leaving an orphan popover pinned at the top-left corner.
+            const anchor = document.querySelector(`.resp-btn-header[data-project-id="${projectId}"]`);
+            if (!anchor) return;
+
+            const current = project.responsibles || [];
+            const options = teamMembers.filter(m => !isExcludedResponsible(m));
+            // Owners who are no longer in the directory still need a way out.
+            const orphans = current.filter(r => !options.includes(r) && !isExcludedResponsible(r));
+
             const popover = document.createElement('div');
-            popover.id = popoverId;
+            popover.id = `resp-popover-${projectId}`;
             popover.className = 'resp-popover';
             popover.setAttribute('role', 'dialog');
-            popover.setAttribute('aria-label', 'Add owner');
+            popover.setAttribute('aria-label', `Owners of ${project.name}`);
             popover.innerHTML = `
                 <div class="resp-popover-content">
-                    <div class="resp-popover-title">Add owner</div>
+                    <div class="resp-popover-title">Owners</div>
                     <div class="resp-popover-buttons">
-                        ${available.map(resp => `
-                            <button type="button" class="resp-popover-btn" onclick="addResponsibleAndClose('${projectId}', '${resp}')">
-                                ${resp}
-                            </button>
-                        `).join('')}
+                        ${options.concat(orphans).map(resp => {
+                            const on = current.includes(resp);
+                            return `<button type="button"
+                                    class="resp-popover-btn${on ? ' is-selected' : ''}"
+                                    data-responsible="${escapeHtml(resp)}"
+                                    aria-pressed="${on}"
+                                    title="${on ? 'Remove' : 'Add'} ${escapeHtml(resp)}"
+                                    onclick="toggleResponsible(${jsArg(projectId)}, ${jsArg(resp)})">
+                                    <span class="resp-popover-check" aria-hidden="true">${on ? '✓' : '+'}</span>${escapeHtml(resp)}
+                                </button>`;
+                        }).join('')}
                     </div>
-                    <button type="button" class="resp-popover-close" aria-label="Close" onclick="closeResponsiblesPopover('${projectId}')">✕</button>
+                    <p class="resp-popover-hint">Click a name to add or remove it.</p>
+                    <button type="button" class="resp-popover-close" aria-label="Close" onclick="closeResponsiblesPopover(${jsArg(projectId)})">✕</button>
                 </div>
             `;
-            
+
             document.body.appendChild(popover);
             setTimeout(() => document.addEventListener('click', handleResponsiblesPopoverOutsideClick), 0);
             const firstOption = popover.querySelector('.resp-popover-btn');
             if (firstOption) firstOption.focus();
-
-            const anchor = document.querySelector(`.resp-btn-header[data-project-id="${projectId}"]`);
-            if (!anchor) return;
 
             const anchorRect = anchor.getBoundingClientRect();
             const scrollX = window.scrollX || window.pageXOffset;
@@ -1050,14 +1437,48 @@ function setDashboardFilter(field, value) {
             });
         }
 
-        function addResponsibleAndClose(projectId, responsible) {
+        async function toggleResponsible(projectId, responsible) {
             const project = projects.find(p => p.id === projectId);
-            if (project) {
-                const updated = [...(project.responsibles || []), responsible];
-                updateProjectField(projectId, 'responsibles', updated).then(() => {
-                    closeResponsiblesPopover(projectId);
-                });
-            }
+            if (!project) return;
+
+            const current = project.responsibles || [];
+            const adding = !current.includes(responsible);
+            const updated = adding
+                ? [...current, responsible]
+                : current.filter(r => r !== responsible);
+
+            await updateProjectField(projectId, 'responsibles', updated);
+
+            // Repaint the owner badges in the project card and the sidebar.
+            // updateProjectField only wrote to Supabase and to the in-memory
+            // project, so without this the popover looked like it had done
+            // nothing at all until a full reload.
+            renderProjectsList();
+            renderActiveView();
+
+            // Update the popover in place instead of rebuilding it: it is a
+            // child of document.body so the re-render above does not touch it,
+            // and replacing it mid-click would make the outside-click handler
+            // think the click landed outside and close it.
+            syncResponsiblesPopoverState(projectId);
+        }
+
+        function syncResponsiblesPopoverState(projectId) {
+            const popover = document.getElementById(`resp-popover-${projectId}`);
+            if (!popover) return;
+
+            const project = projects.find(p => p.id === projectId);
+            const current = (project && project.responsibles) || [];
+
+            popover.querySelectorAll('.resp-popover-btn').forEach(btn => {
+                const resp = btn.dataset.responsible || '';
+                const on = current.includes(resp);
+                btn.classList.toggle('is-selected', on);
+                btn.setAttribute('aria-pressed', String(on));
+                btn.title = `${on ? 'Remove' : 'Add'} ${resp}`;
+                const check = btn.querySelector('.resp-popover-check');
+                if (check) check.textContent = on ? '✓' : '+';
+            });
         }
 
         function closeResponsiblesPopover(projectId) {
@@ -1078,12 +1499,14 @@ function setDashboardFilter(field, value) {
             closeResponsiblesPopover();
         }
 
-        function removeResponsible(projectId, responsible) {
+        async function removeResponsible(projectId, responsible) {
             const project = projects.find(p => p.id === projectId);
-            if (project) {
-                const updated = (project.responsibles || []).filter(r => r !== responsible);
-                updateProjectField(projectId, 'responsibles', updated);
-            }
+            if (!project) return;
+
+            const updated = (project.responsibles || []).filter(r => r !== responsible);
+            await updateProjectField(projectId, 'responsibles', updated);
+            renderProjectsList();
+            renderActiveView();
         }
 
 
@@ -1144,7 +1567,7 @@ function setDashboardFilter(field, value) {
                 priority: 'Media',
                 progress: 0,
                 prerequisites: prerequisites,
-                responsibles: creatorInitials ? [creatorInitials] : []
+                responsibles: sanitizeResponsiblesList(newProjectOwners.length ? newProjectOwners : (creatorInitials ? [creatorInitials] : []))
             };
 
             // console.log("📤 Creando proyecto:", projectRow);
@@ -1207,7 +1630,9 @@ function setDashboardFilter(field, value) {
             const lists = {
                 activos: document.getElementById('projectsListActive'),
                 bau: document.getElementById('projectsListBau'),
-                completados: document.getElementById('projectsListCompleted')
+                completados: document.getElementById('projectsListCompleted'),
+                archivados: document.getElementById('projectsListArchived'),
+                eliminados: document.getElementById('projectsListDeleted')
             };
 
             if (!lists.activos || !lists.completados) {
@@ -1220,21 +1645,59 @@ function setDashboardFilter(field, value) {
                 list.className = `projects-list ${sidebarCollapsed[group] ? 'collapsed' : 'expanded'}`;
             });
 
-            projects.forEach(project => {
-                const list = lists[getProjectGroup(project)];
-                if (!list) return;
+            // Un <li> de proyecto: el botón de selección y el menú "..."
+            // que aparece al pasar el ratón por encima.
+            const buildItem = (project, state) => {
                 const li = document.createElement('li');
-                const isActive = currentProjectId === project.id ? 'active' : '';
-                li.innerHTML = `<button type="button" onclick="selectProject('${project.id}')" class="${isActive}"${isActive ? ' aria-current="true"' : ''}>${escapeHtml(project.name)}</button>`;
-                list.appendChild(li);
+                li.className = 'project-item';
+                const isActive = currentProjectId === project.id;
+                li.innerHTML = `
+                    <button type="button" class="project-item-select${isActive ? ' active' : ''}"${isActive ? ' aria-current="true"' : ''}
+                            onclick="selectProject(${jsArg(project.id)})">${escapeHtml(project.name)}</button>
+                    <button type="button" class="project-item-menu-btn" data-project-id="${escapeHtml(project.id)}"
+                            title="Project options" aria-label="Options for ${escapeHtml(project.name)}" aria-haspopup="true"
+                            onclick="openProjectMenu(event, ${jsArg(project.id)}, ${jsArg(state)})">⋯</button>`;
+                return li;
+            };
+
+            projects.forEach(project => {
+                const group = getProjectGroup(project);
+                const list = lists[group];
+                if (!list) return;
+                list.appendChild(buildItem(project, group === 'archivados' ? 'archived' : 'live'));
             });
 
+            deletedProjects.forEach(project => {
+                if (!lists.eliminados) return;
+                lists.eliminados.appendChild(buildItem(project, 'deleted'));
+            });
+
+            // Contadores: con las secciones plegadas es la única pista de
+            // que hay algo archivado o en la papelera.
+            const archivedCount = projects.filter(p => isProjectArchived(p)).length;
+            const archivedBadge = document.getElementById('sidebarCountArchived');
+            if (archivedBadge) archivedBadge.textContent = archivedCount ? String(archivedCount) : '';
+            const deletedBadge = document.getElementById('sidebarCountDeleted');
+            if (deletedBadge) deletedBadge.textContent = deletedProjects.length ? String(deletedProjects.length) : '';
+
+            if (!lists.archivados || !archivedCount) {
+                // nada que pintar
+            }
+            if (lists.archivados && !archivedCount) {
+                lists.archivados.innerHTML = '<li class="project-item-empty">Nothing archived.</li>';
+            }
+            if (lists.eliminados && !deletedProjects.length) {
+                lists.eliminados.innerHTML = '<li class="project-item-empty">Bin is empty.</li>';
+            }
+
+            // Los selectores de proyecto solo ofrecen proyectos vivos: no
+            // tiene sentido crear una tarea en algo archivado o borrado.
             const select = document.getElementById('commentProjectSelect');
             if (select) {
                 // Conservar la selección: un refresco en tiempo real no debe vaciar el modal abierto
                 const previousSelection = select.value;
                 select.innerHTML = '<option value="">Select a project...</option>';
-                projects.forEach(p => {
+                getLiveProjects().forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id;
                     opt.textContent = p.name;
@@ -1246,9 +1709,270 @@ function setDashboardFilter(field, value) {
             requestAnimationFrame(syncSidebarListHeights);
         }
 
+        // =====================================================
+        // ===== MENÚ "..." DE PROYECTO (renombrar/archivar/...) =====
+        // Se monta en document.body, no dentro del <li>: la lista del
+        // sidebar tiene overflow y un menú anidado quedaría recortado.
+        // =====================================================
+
+        function openProjectMenu(event, projectId, state) {
+            if (event) event.stopPropagation();
+
+            const alreadyOpen = document.getElementById('projectMenu');
+            closeProjectMenu();
+            // Segundo clic en el mismo "..." lo cierra.
+            if (alreadyOpen && alreadyOpen.dataset.projectId === projectId) return;
+
+            const project = findAnyProject(projectId);
+            if (!project) return;
+
+            const anchor = document.querySelector(`.project-item-menu-btn[data-project-id="${CSS.escape(projectId)}"]`);
+            if (!anchor) return;
+
+            const id = jsArg(projectId);
+            let items;
+            if (state === 'deleted') {
+                items = `
+                    <button type="button" class="project-menu-item" onclick="restoreProjectFromBin(${id})">
+                        <span class="project-menu-ico" aria-hidden="true">⤺</span>Restore
+                    </button>
+                    <div class="project-menu-sep"></div>
+                    <button type="button" class="project-menu-item project-menu-item--danger" onclick="deleteProjectForever(${id})">
+                        <span class="project-menu-ico" aria-hidden="true">🗑</span>Delete permanently
+                    </button>`;
+            } else if (state === 'archived') {
+                items = `
+                    <button type="button" class="project-menu-item" onclick="renameProjectFromMenu(${id})">
+                        <span class="project-menu-ico" aria-hidden="true">✎</span>Rename
+                    </button>
+                    <button type="button" class="project-menu-item" onclick="setProjectArchived(${id}, false)">
+                        <span class="project-menu-ico" aria-hidden="true">⤺</span>Unarchive
+                    </button>
+                    <div class="project-menu-sep"></div>
+                    <button type="button" class="project-menu-item project-menu-item--danger" onclick="moveProjectToBin(${id})">
+                        <span class="project-menu-ico" aria-hidden="true">🗑</span>Move to bin
+                    </button>`;
+            } else {
+                items = `
+                    <button type="button" class="project-menu-item" onclick="renameProjectFromMenu(${id})">
+                        <span class="project-menu-ico" aria-hidden="true">✎</span>Rename
+                    </button>
+                    <button type="button" class="project-menu-item" onclick="setProjectArchived(${id}, true)">
+                        <span class="project-menu-ico" aria-hidden="true">🗄</span>Archive
+                    </button>
+                    <div class="project-menu-sep"></div>
+                    <button type="button" class="project-menu-item project-menu-item--danger" onclick="moveProjectToBin(${id})">
+                        <span class="project-menu-ico" aria-hidden="true">🗑</span>Move to bin
+                    </button>`;
+            }
+
+            const menu = document.createElement('div');
+            menu.id = 'projectMenu';
+            menu.className = 'project-menu';
+            menu.dataset.projectId = projectId;
+            menu.setAttribute('role', 'menu');
+            menu.setAttribute('aria-label', `Options for ${project.name}`);
+            menu.innerHTML = `<div class="project-menu-title">${escapeHtml(project.name)}</div>${items}`;
+
+            document.body.appendChild(menu);
+            setTimeout(() => document.addEventListener('click', handleProjectMenuOutsideClick), 0);
+
+            const first = menu.querySelector('.project-menu-item');
+            if (first) first.focus();
+
+            const rect = anchor.getBoundingClientRect();
+            requestAnimationFrame(() => {
+                const menuRect = menu.getBoundingClientRect();
+                let left = rect.right + (window.scrollX || 0) + 6;
+                let top = rect.top + (window.scrollY || 0);
+
+                const maxLeft = (window.scrollX || 0) + window.innerWidth - menuRect.width - 12;
+                if (left > maxLeft) left = Math.max((window.scrollX || 0) + 12, maxLeft);
+
+                const maxTop = (window.scrollY || 0) + window.innerHeight - menuRect.height - 12;
+                if (top > maxTop) top = Math.max((window.scrollY || 0) + 12, maxTop);
+
+                menu.style.left = `${left}px`;
+                menu.style.top = `${top}px`;
+            });
+        }
+
+        function closeProjectMenu() {
+            const menu = document.getElementById('projectMenu');
+            if (menu) menu.remove();
+            document.removeEventListener('click', handleProjectMenuOutsideClick);
+        }
+
+        function handleProjectMenuOutsideClick(event) {
+            const menu = document.getElementById('projectMenu');
+            if (!menu) {
+                document.removeEventListener('click', handleProjectMenuOutsideClick);
+                return;
+            }
+            if (menu.contains(event.target)) return;
+            if (event.target.closest && event.target.closest('.project-item-menu-btn')) return;
+            closeProjectMenu();
+        }
+
+        function renameProjectFromMenu(projectId) {
+            closeProjectMenu();
+            openRenameProjectModal(projectId);
+        }
+
+        // =====================================================
+        // ======= ARCHIVAR / PAPELERA / RESTAURAR =============
+        // =====================================================
+
+        async function setProjectArchived(projectId, archived) {
+            closeProjectMenu();
+            const project = findAnyProject(projectId);
+            if (!project) return;
+
+            const stamp = archived ? new Date().toISOString() : null;
+            const who = archived ? normalizeInitials(currentUser || '') : null;
+
+            const { error } = await supabaseClient
+                .from('projects')
+                .update({ archived_at: stamp, archived_by: who })
+                .eq('id', projectId);
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Could not archive the project'), 'error');
+                return;
+            }
+
+            project.archivedAt = stamp;
+            project.archivedBy = who || '';
+
+            // Si el proyecto archivado era el que estaba abierto, saltar a
+            // uno vivo: dejar la ficha de un proyecto archivado abierta
+            // invita a seguir trabajando en él.
+            if (archived && currentProjectId === projectId) {
+                const next = getLiveProjects()[0];
+                currentProjectId = next ? next.id : null;
+            }
+
+            // La sección donde acaba de aparecer tiene que estar visible.
+            if (archived) sidebarCollapsed.archivados = false;
+
+            renderProjectsList();
+            renderActiveView();
+            showToast(archived ? 'Project archived' : 'Project unarchived', 'success');
+        }
+
+        // Borrado blando: el proyecto va a la papelera con todo su
+        // histórico intacto. Ver migrations_capacity_tasks_archive.sql.
+        async function moveProjectToBin(projectId) {
+            closeProjectMenu();
+            const project = findAnyProject(projectId);
+            if (!project) return;
+
+            if (!confirm(`Move "${project.name}" to the bin?\n\nIt disappears from the views but nothing is lost: you can restore it from the Bin section.`)) return;
+
+            const stamp = new Date().toISOString();
+            const who = normalizeInitials(currentUser || '');
+
+            const { error } = await supabaseClient
+                .from('projects')
+                .update({ deleted_at: stamp, deleted_by: who })
+                .eq('id', projectId);
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Could not move the project to the bin'), 'error');
+                return;
+            }
+
+            project.deletedAt = stamp;
+            project.deletedBy = who;
+            projects = projects.filter(p => p.id !== projectId);
+            deletedProjects.unshift(project);
+
+            if (currentProjectId === projectId) {
+                const next = getLiveProjects()[0];
+                currentProjectId = next ? next.id : null;
+            }
+
+            sidebarCollapsed.eliminados = false;
+            renderProjectsList();
+            renderActiveView();
+            showToast('Moved to bin', 'success');
+        }
+
+        async function restoreProjectFromBin(projectId) {
+            closeProjectMenu();
+            const project = deletedProjects.find(p => p.id === projectId);
+            if (!project) return;
+
+            const { error } = await supabaseClient
+                .from('projects')
+                .update({ deleted_at: null, deleted_by: null })
+                .eq('id', projectId);
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Could not restore the project'), 'error');
+                return;
+            }
+
+            project.deletedAt = null;
+            project.deletedBy = '';
+            deletedProjects = deletedProjects.filter(p => p.id !== projectId);
+            projects.push(project);
+
+            // Vuelve a la sección que le toque por fase, o a Archivados si
+            // además estaba archivado cuando se tiró.
+            const group = getProjectGroup(project);
+            sidebarCollapsed[group] = false;
+
+            renderProjectsList();
+            renderActiveView();
+            showToast('Project restored', 'success');
+        }
+
+        // Borrado DEFINITIVO. Esto sí es un DELETE real, y todas las tablas
+        // hijas cuelgan con ON DELETE CASCADE, así que se lleva comentarios,
+        // notas, incidencias y capacidades. Doble confirmación a propósito.
+        async function deleteProjectForever(projectId) {
+            closeProjectMenu();
+            const project = deletedProjects.find(p => p.id === projectId);
+            if (!project) return;
+
+            const commentCount = (dailyComments || []).filter(c => c.projectId === projectId).length;
+            const warning = `Delete "${project.name}" permanently?\n\n` +
+                `This cannot be undone. It also deletes its comments${commentCount ? ` (${commentCount})` : ''}, notes, incidents and weekly goals.`;
+            if (!confirm(warning)) return;
+            if (!confirm(`Last check: permanently delete "${project.name}"?`)) return;
+
+            const { error } = await supabaseClient
+                .from('projects')
+                .delete()
+                .eq('id', projectId);
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Could not delete the project'), 'error');
+                return;
+            }
+
+            deletedProjects = deletedProjects.filter(p => p.id !== projectId);
+            if (currentProjectId === projectId) {
+                const next = getLiveProjects()[0];
+                currentProjectId = next ? next.id : null;
+            }
+
+            // Recargar: el cascade ha borrado filas de varias tablas que
+            // seguimos teniendo en memoria.
+            await loadDataFromSupabase(true);
+            renderProjectsList();
+            renderActiveView();
+            showToast('Project permanently deleted', 'success');
+        }
+
         function toggleSidebarSection(section) {
             sidebarCollapsed[section] = !sidebarCollapsed[section];
-            const titleIds = { activos: 'sidebarTitleActivos', bau: 'sidebarTitleBau', completados: 'sidebarTitleCompletados' };
+            const titleIds = { activos: 'sidebarTitleActivos', bau: 'sidebarTitleBau', completados: 'sidebarTitleCompletados', archivados: 'sidebarTitleArchivados', eliminados: 'sidebarTitleEliminados' };
             const title = document.getElementById(titleIds[section]);
             if (title) {
                 title.setAttribute('aria-expanded', String(!sidebarCollapsed[section]));
@@ -1263,10 +1987,17 @@ function setDashboardFilter(field, value) {
             currentProjectId = projectId;
             renderProjectsList();
 
-            if (currentView === 'daily') {
+            const selectedProject = findAnyProject(projectId);
+            // El Daily solo tiene pestañas para activos/BAU/completados. Un
+            // proyecto archivado o en la papelera no cabe ahí, así que se
+            // abre su ficha (en modo consulta) en lugar de dejar el Daily
+            // en un modo que no existe.
+            const group = getProjectGroup(selectedProject);
+            const showableInDaily = selectedProject && !selectedProject.deletedAt && group !== 'archivados';
+
+            if (currentView === 'daily' && showableInDaily) {
                 // En Daily, mostrar el modo acorde al proyecto y resaltar su fila
-                const selectedProject = projects.find(p => p.id === projectId);
-                setDailyViewMode(getProjectGroup(selectedProject));
+                setDailyViewMode(group);
             } else {
                 // Desde cualquier otra vista, abrir la ficha del proyecto
                 switchView('ficha');
@@ -1374,8 +2105,27 @@ function setDashboardFilter(field, value) {
             );
         }
 
+        // Team tasks for a day, newest meaningful order: pending first, then
+        // by creation. Shared with everybody, unlike day_personal_tasks.
+        function getDayTeamTasksByDate(dateKey) {
+            return (dayTasks || []).filter(t => t.date === dateKey);
+        }
+
+        // Team tasks on that day that are mine: either assigned to me or left
+        // unassigned (nobody picked them up yet, so they are everyone's).
+        function getMyDayTeamTasksByDate(dateKey) {
+            const me = normalizeInitials(currentUser || '');
+            return getDayTeamTasksByDate(dateKey).filter(t =>
+                t.assignees.includes(me) || t.assignees.length === 0
+            );
+        }
+
+        // The "+" in the Daily day header reflects what the logged-in user
+        // still has to do that day: their private tasks plus the team tasks
+        // that are on their plate.
         function getDayHeaderButtonState(dateKey) {
-            const tasks = getCurrentUserDayPersonalTasksByDate(dateKey);
+            const tasks = getCurrentUserDayPersonalTasksByDate(dateKey)
+                .concat(getMyDayTeamTasksByDate(dateKey));
             if (!tasks.length) return 'none';
             const hasPending = tasks.some(t => !t.completed);
             return hasPending ? 'pending' : 'done';
@@ -1389,16 +2139,24 @@ function setDashboardFilter(field, value) {
         }
 
         function getDayHeaderButtonTitle(dateKey) {
-            const tasks = getCurrentUserDayPersonalTasksByDate(dateKey);
-            if (!tasks.length) return 'Personal tasks for the day';
-            const pending = tasks.filter(t => !t.completed).length;
-            if (pending > 0) return `${pending} pending in personal tasks for the day`;
-            return 'Personal tasks for the day completed';
+            const personalPending = getCurrentUserDayPersonalTasksByDate(dateKey).filter(t => !t.completed).length;
+            const teamPending = getMyDayTeamTasksByDate(dateKey).filter(t => !t.completed).length;
+            const total = personalPending + teamPending;
+
+            if (total === 0) {
+                const state = getDayHeaderButtonState(dateKey);
+                return state === 'done' ? 'Tasks for the day completed' : 'Tasks for the day';
+            }
+
+            const parts = [];
+            if (teamPending > 0) parts.push(`${teamPending} team`);
+            if (personalPending > 0) parts.push(`${personalPending} personal`);
+            return `${total} pending for the day (${parts.join(', ')})`;
         }
 
         function formatDayPersonalModalTitle(dateKey) {
             const dateObj = parseDateKeyToDate(dateKey);
-            if (!dateObj) return 'Personal tasks for the day';
+            if (!dateObj) return 'Tasks for the day';
             const weekday = dateObj.toLocaleDateString('en-GB', { weekday: 'long' });
             const niceWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
             const niceDate = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -1410,14 +2168,19 @@ function setDashboardFilter(field, value) {
                 event.stopPropagation();
             }
             dayPersonalTasksModalContext.dateKey = dateKey;
+            // Start the team-task form clean, with the current user already
+            // on it: "I am working on this" is the common case.
+            resetDayTeamTaskForm();
             renderDayPersonalTasksModal();
-            openModal('dayPersonalTasksModal', '#dayPersonalTaskInput');
+            openModal('dayPersonalTasksModal', '#dayTeamTaskInput');
         }
 
         function closeDayPersonalTasksModal() {
             closeModal('dayPersonalTasksModal');
             const input = document.getElementById('dayPersonalTaskInput');
             if (input) input.value = '';
+            const teamInput = document.getElementById('dayTeamTaskInput');
+            if (teamInput) teamInput.value = '';
         }
 
         function previousDayPersonalTasksDate() {
@@ -1439,6 +2202,11 @@ function setDashboardFilter(field, value) {
             const titleEl = document.getElementById('dayPersonalTasksTitle');
             if (titleEl) titleEl.textContent = formatDayPersonalModalTitle(dateKey);
 
+            renderDayTeamTasksSection(dateKey);
+            renderDayPersonalTasksList(dateKey);
+        }
+
+        function renderDayPersonalTasksList(dateKey) {
             const listEl = document.getElementById('dayPersonalTasksList');
             if (!listEl) return;
 
@@ -1540,6 +2308,270 @@ function setDashboardFilter(field, value) {
             }
 
             await loadDayPersonalTasks();
+            renderDayPersonalTasksModal();
+            renderActiveView();
+        }
+
+        // =====================================================
+        // ============ TAREAS DE DÍA DEL EQUIPO ===============
+        // Shared counterpart of day_personal_tasks: same day-by-day
+        // rhythm, but visible to everyone and assignable, so you can
+        // put "move the Power Automate flow to UAT" on Thursday and
+        // tag whoever needs to know or lend a hand.
+        //
+        // Lives in the same modal as the personal tasks (the "+" in
+        // the Daily day header). Project is optional: not every day
+        // task belongs to a project.
+        // =====================================================
+
+        // Assignees ticked in the new-team-task form. Held outside the DOM so
+        // the picker survives its own re-render.
+        let dayTeamTaskAssignees = [];
+
+        // Project chosen in the new-team-task form. Also kept outside the DOM:
+        // the modal is re-rendered by the realtime handler, and reading the
+        // selection back off the <select> would lose an explicit "No project"
+        // (empty value) and silently snap it back to the current project.
+        let dayTeamTaskProjectId = '';
+
+        async function loadDayTasks() {
+            const { data, error } = await supabaseClient
+                .from(DAY_TASKS_TABLE)
+                .select('*')
+                .order('task_date', { ascending: true })
+                .order('created_at', { ascending: true });
+
+            if (error) {
+                console.error('Error loading team tasks for the day:', formatSupabaseError(error, 'Could not load team tasks for the day'));
+                dayTasks = [];
+                return;
+            }
+
+            dayTasks = (data || []).map(t => ({
+                id: t.id,
+                date: t.task_date,
+                text: t.text || '',
+                projectId: t.project_id || null,
+                assignees: sanitizeResponsiblesList(t.assignees),
+                description: t.description || '',
+                estimatedHours: Number(t.estimated_hours) || 0,
+                hoursByAssignee: normalizeHoursByAssignee(t.hours_by_assignee),
+                createdBy: normalizeInitials(t.created_by || ''),
+                completed: !!t.completed,
+                createdAt: t.created_at,
+                updatedAt: t.updated_at || t.created_at
+            }));
+        }
+
+        async function loadCapacityOverrides() {
+            const { data, error } = await supabaseClient
+                .from(CAPACITY_OVERRIDES_TABLE)
+                .select('*');
+
+            if (error) {
+                // La tabla puede no existir todavía si no se ha pasado la
+                // migración. No es fatal: sin overrides la capacidad es
+                // simplemente la calculada.
+                console.error('Error loading capacity overrides:', formatSupabaseError(error, 'Could not load capacity overrides'));
+                capacityOverrides = [];
+                return;
+            }
+
+            capacityOverrides = (data || []).map(o => ({
+                userInitials: normalizeInitials(o.user_initials),
+                weekStart: o.week_start,
+                overrideHours: Number(o.override_hours) || 0,
+                note: o.note || '',
+                createdBy: normalizeInitials(o.created_by || '')
+            }));
+        }
+
+        function resetDayTeamTaskForm() {
+            const me = normalizeInitials(currentUser || '');
+            dayTeamTaskAssignees = (me && teamMembers.includes(me)) ? [me] : [];
+
+            const input = document.getElementById('dayTeamTaskInput');
+            if (input) input.value = '';
+
+            const projectSelect = document.getElementById('dayTeamTaskProject');
+            dayTeamTaskProjectId = (currentProjectId && projects.some(p => p.id === currentProjectId))
+                ? currentProjectId
+                : '';
+            if (projectSelect) projectSelect.value = dayTeamTaskProjectId;
+        }
+
+        function onDayTeamTaskProjectChange(value) {
+            dayTeamTaskProjectId = value || '';
+        }
+
+        function renderDayTeamTaskAssignees() {
+            const host = document.getElementById('dayTeamTaskAssignees');
+            if (!host) return;
+
+            const options = teamMembers.filter(m => !isExcludedResponsible(m));
+            if (!options.length) {
+                host.innerHTML = '<p class="owner-picker-hint">No team members available.</p>';
+                return;
+            }
+
+            host.innerHTML = options.map(member => {
+                const on = dayTeamTaskAssignees.includes(member);
+                return `<button type="button"
+                        class="owner-picker-btn${on ? ' is-selected' : ''}"
+                        aria-pressed="${on}"
+                        title="${on ? 'Unassign' : 'Assign'} ${escapeHtml(member)}"
+                        onclick="toggleDayTeamTaskAssignee(${jsArg(member)})">
+                        <span class="owner-picker-check" aria-hidden="true">${on ? '✓' : '+'}</span>${escapeHtml(member)}
+                    </button>`;
+            }).join('');
+        }
+
+        function toggleDayTeamTaskAssignee(member) {
+            dayTeamTaskAssignees = dayTeamTaskAssignees.includes(member)
+                ? dayTeamTaskAssignees.filter(m => m !== member)
+                : [...dayTeamTaskAssignees, member];
+            renderDayTeamTaskAssignees();
+        }
+
+        // Rebuilt on every render so a renamed, created or deleted project is
+        // reflected without reopening the modal. The current selection is
+        // preserved across the rebuild.
+        function renderDayTeamTaskProjectOptions() {
+            const select = document.getElementById('dayTeamTaskProject');
+            if (!select) return;
+
+            const sorted = projects.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            select.innerHTML = '<option value="">No project</option>' +
+                sorted.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+
+            // Drop a selection whose project has since been deleted.
+            if (dayTeamTaskProjectId && !projects.some(p => p.id === dayTeamTaskProjectId)) {
+                dayTeamTaskProjectId = '';
+            }
+            select.value = dayTeamTaskProjectId;
+        }
+
+        function renderDayTeamTasksSection(dateKey) {
+            renderDayTeamTaskProjectOptions();
+            renderDayTeamTaskAssignees();
+
+            const listEl = document.getElementById('dayTeamTasksList');
+            if (!listEl) return;
+
+            const me = normalizeInitials(currentUser || '');
+            const tasks = getDayTeamTasksByDate(dateKey)
+                .slice()
+                .sort((a, b) => {
+                    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+                    return new Date(b.createdAt) - new Date(a.createdAt);
+                });
+
+            if (!tasks.length) {
+                listEl.innerHTML = '<div class="empty-state empty-state--compact">No team tasks for this day.</div>';
+                return;
+            }
+
+            let html = '<div class="day-personal-list">';
+            tasks.forEach(task => {
+                const project = task.projectId ? projects.find(p => p.id === task.projectId) : null;
+                const mine = task.assignees.includes(me);
+
+                const assigneeChips = task.assignees.length
+                    ? task.assignees.map(a => `<span class="day-task-chip${a === me ? ' is-me' : ''}">${escapeHtml(a)}</span>`).join('')
+                    : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
+
+                const projectChip = project
+                    ? `<span class="day-task-project">${escapeHtml(project.name)}</span>`
+                    : '';
+
+                html += `
+                <div class="day-personal-item day-task-item${task.completed ? ' done' : ''}${mine ? ' is-mine' : ''}">
+                    <label class="day-personal-item-main">
+                        <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleDayTeamTask(${jsArg(task.id)}, this.checked)">
+                        <span class="day-task-body">
+                            <span class="day-task-text">${escapeHtml(task.text)}</span>
+                            <span class="day-task-meta">${projectChip}${assigneeChips}${task.createdBy ? `<span class="day-task-author">by ${escapeHtml(task.createdBy)}</span>` : ''}</span>
+                        </span>
+                    </label>
+                    <button type="button" class="day-personal-delete" onclick="deleteDayTeamTask(${jsArg(task.id)})" title="Delete task" aria-label="Delete team task: ${escapeHtml(task.text)}">×</button>
+                </div>`;
+            });
+            html += '</div>';
+
+            listEl.innerHTML = html;
+        }
+
+        async function addDayTeamTask() {
+            const input = document.getElementById('dayTeamTaskInput');
+            if (!input) return;
+
+            const text = input.value.trim();
+            if (!text) {
+                input.focus();
+                return;
+            }
+
+            const dateKey = dayPersonalTasksModalContext.dateKey || formatDateKey(new Date());
+            const projectId = dayTeamTaskProjectId || null;
+
+            const { error } = await supabaseClient
+                .from(DAY_TASKS_TABLE)
+                .insert({
+                    task_date: dateKey,
+                    text,
+                    project_id: projectId,
+                    assignees: sanitizeResponsiblesList(dayTeamTaskAssignees),
+                    created_by: normalizeInitials(currentUser || 'US'),
+                    completed: false
+                });
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Error saving team task for the day'), 'error');
+                return;
+            }
+
+            input.value = '';
+            await loadDayTasks();
+            renderDayPersonalTasksModal();
+            renderActiveView();
+            showToast('Team task added', 'success');
+        }
+
+        async function toggleDayTeamTask(taskId, done) {
+            const { error } = await supabaseClient
+                .from(DAY_TASKS_TABLE)
+                .update({ completed: !!done, updated_at: new Date().toISOString() })
+                .eq('id', taskId);
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Error updating team task for the day'), 'error');
+                return;
+            }
+
+            await loadDayTasks();
+            renderDayPersonalTasksModal();
+            renderActiveView();
+        }
+
+        async function deleteDayTeamTask(taskId) {
+            const confirmed = confirm('Delete this team task? It will disappear for everyone.');
+            if (!confirmed) return;
+
+            const { error } = await supabaseClient
+                .from(DAY_TASKS_TABLE)
+                .delete()
+                .eq('id', taskId);
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Error deleting team task for the day'), 'error');
+                return;
+            }
+
+            await loadDayTasks();
             renderDayPersonalTasksModal();
             renderActiveView();
         }
@@ -1971,15 +3003,320 @@ function setDashboardFilter(field, value) {
             openDailyCommentModal(dateKey, projectId);
         }
 
+        // =====================================================
+        // ===== TAREAS DEL DAILY: RESPONSABLES Y HORAS ========
+        //
+        // Una tarea puede tener varios responsables y unas horas
+        // estimadas. Por defecto las horas se reparten a partes
+        // iguales; "Split per person" permite un reparto explícito
+        // cuando la realidad no es simétrica (lo presupuestado en 5 h
+        // acabó siendo 8 para uno y 2 para el otro).
+        //
+        // El estado del formulario vive fuera del DOM para que los
+        // pickers se puedan repintar sin perder lo ya elegido.
+        // =====================================================
+
+        let dailyTaskResponsibles = [];
+        let dailyTaskHoursCustom = false;
+        let dailyTaskHoursByAssignee = {};
+
+        function renderDailyTaskResponsibles() {
+            const host = document.getElementById('commentResponsibles');
+            if (!host) return;
+
+            const isPersonal = !!(document.getElementById('commentPersonal') || {}).checked;
+            const options = teamMembers.filter(m => !isExcludedResponsible(m));
+
+            if (!options.length) {
+                host.innerHTML = '<p class="owner-picker-hint">No team members available.</p>';
+                return;
+            }
+
+            host.innerHTML = options.map(member => {
+                const on = dailyTaskResponsibles.includes(member);
+                return `<button type="button"
+                        class="owner-picker-btn${on ? ' is-selected' : ''}"
+                        aria-pressed="${on}"
+                        ${isPersonal ? 'disabled title="A personal task always belongs to you"' : `title="${on ? 'Remove' : 'Add'} ${escapeHtml(member)}"`}
+                        onclick="toggleDailyTaskResponsible(${jsArg(member)})">
+                        <span class="owner-picker-check" aria-hidden="true">${on ? '✓' : '+'}</span>${escapeHtml(member)}
+                    </button>`;
+            }).join('');
+
+            // Espejo en el select oculto: la columna `responsible` de
+            // daily_comments sigue guardando el primero de la lista.
+            const mirror = document.getElementById('commentResponsible');
+            if (mirror) {
+                const first = dailyTaskResponsibles[0] || '';
+                if (first && !Array.from(mirror.options).some(o => o.value === first)) {
+                    const opt = document.createElement('option');
+                    opt.value = first;
+                    opt.textContent = first;
+                    mirror.appendChild(opt);
+                }
+                mirror.value = first;
+            }
+        }
+
+        function toggleDailyTaskResponsible(member) {
+            const personal = document.getElementById('commentPersonal');
+            if (personal && personal.checked) return;
+
+            dailyTaskResponsibles = dailyTaskResponsibles.includes(member)
+                ? dailyTaskResponsibles.filter(m => m !== member)
+                : [...dailyTaskResponsibles, member];
+
+            // Un reparto a medida deja de tener sentido si cambia quién
+            // participa: se vuelve al reparto a partes iguales.
+            dailyTaskHoursByAssignee = {};
+            dailyTaskHoursCustom = false;
+
+            renderDailyTaskResponsibles();
+            renderDailyTaskHoursSplit();
+        }
+
+        function onDailyTaskHoursChange() {
+            // Al tocar el total se recalcula el reparto desde cero.
+            dailyTaskHoursByAssignee = {};
+            dailyTaskHoursCustom = false;
+            renderDailyTaskHoursSplit();
+        }
+
+        function getDailyTaskTotalHoursInput() {
+            const input = document.getElementById('commentHours');
+            const hours = Number(input && input.value);
+            return Number.isFinite(hours) && hours > 0 ? Math.min(hours, 1000) : 0;
+        }
+
+        function toggleDailyTaskHoursSplit() {
+            if (!dailyTaskResponsibles.length) {
+                showToast('Pick who is responsible first.', 'warning');
+                return;
+            }
+            dailyTaskHoursCustom = !dailyTaskHoursCustom;
+            if (dailyTaskHoursCustom) {
+                // Precargar con el reparto a partes iguales para que editar
+                // sea ajustar, no empezar de cero.
+                const total = getDailyTaskTotalHoursInput();
+                const share = dailyTaskResponsibles.length ? total / dailyTaskResponsibles.length : 0;
+                dailyTaskHoursByAssignee = {};
+                dailyTaskResponsibles.forEach(u => { dailyTaskHoursByAssignee[u] = Math.round(share * 10) / 10; });
+            } else {
+                dailyTaskHoursByAssignee = {};
+            }
+            renderDailyTaskHoursSplit();
+        }
+
+        function setDailyTaskHoursFor(member, value) {
+            const hours = Number(value);
+            dailyTaskHoursByAssignee[member] = Number.isFinite(hours) && hours >= 0 ? Math.min(hours, 1000) : 0;
+            // El total es siempre la suma del reparto, para que las dos
+            // cifras no puedan contradecirse.
+            const total = Object.values(dailyTaskHoursByAssignee).reduce((s, h) => s + (Number(h) || 0), 0);
+            const input = document.getElementById('commentHours');
+            if (input) input.value = Math.round(total * 10) / 10;
+            renderDailyTaskHoursSplit();
+        }
+
+        function renderDailyTaskHoursSplit() {
+            const host = document.getElementById('commentHoursSplit');
+            const btn = document.getElementById('commentHoursSplitBtn');
+            if (!host) return;
+
+            if (btn) {
+                btn.textContent = dailyTaskHoursCustom ? 'Split evenly' : 'Split per person';
+                btn.setAttribute('aria-pressed', String(dailyTaskHoursCustom));
+            }
+
+            const total = getDailyTaskTotalHoursInput();
+
+            if (!dailyTaskHoursCustom) {
+                if (!dailyTaskResponsibles.length || total <= 0) {
+                    host.innerHTML = '';
+                    return;
+                }
+                const share = total / dailyTaskResponsibles.length;
+                host.innerHTML = `<p class="hours-split-summary">${formatHours(share)}h each for ${dailyTaskResponsibles.map(escapeHtml).join(', ')}</p>`;
+                return;
+            }
+
+            host.innerHTML = `<div class="hours-split-rows">${dailyTaskResponsibles.map(member => `
+                <div class="hours-split-row">
+                    <label class="hours-split-user" for="hoursFor_${escapeHtml(member)}">${escapeHtml(member)}</label>
+                    <input type="number" id="hoursFor_${escapeHtml(member)}" min="0" max="1000" step="0.5"
+                           value="${dailyTaskHoursByAssignee[member] !== undefined ? dailyTaskHoursByAssignee[member] : 0}"
+                           onchange="setDailyTaskHoursFor(${jsArg(member)}, this.value)">
+                    <span class="hours-split-unit">h</span>
+                </div>`).join('')}</div>
+                <p class="hours-split-summary">Total ${formatHours(total)}h</p>`;
+        }
+
+        // =====================================================
+        // ======== DETALLE AMPLIADO DE UNA TAREA ==============
+        // El panel Daily comments solo tiene sitio para el titular.
+        // Al pulsar una tarea se abre centrada con todo el detalle.
+        // Cerrar (fondo, Escape o "Close") NO la completa.
+        // =====================================================
+
+        let taskDetailId = null;
+
+        function openTaskDetail(commentId) {
+            const comment = (dailyComments || []).find(c => c.id === commentId);
+            if (!comment) return;
+
+            taskDetailId = commentId;
+            renderTaskDetail();
+            openModal('taskDetailModal');
+        }
+
+        function closeTaskDetailModal() {
+            closeModal('taskDetailModal');
+            taskDetailId = null;
+        }
+
+        function editTaskFromDetail() {
+            const comment = (dailyComments || []).find(c => c.id === taskDetailId);
+            if (!comment) return;
+            closeTaskDetailModal();
+            editingCommentId = comment.id;
+            openDailyCommentModal(comment.date, comment.projectId);
+        }
+
+        function renderTaskDetail() {
+            const comment = (dailyComments || []).find(c => c.id === taskDetailId);
+            const body = document.getElementById('taskDetailBody');
+            const titleEl = document.getElementById('taskDetailTitle');
+            if (!body) return;
+
+            if (!comment) {
+                // La tarea puede haber desaparecido por un refresco en
+                // tiempo real mientras estaba abierta.
+                body.innerHTML = '<div class="empty-state empty-state--compact">This task no longer exists.</div>';
+                if (titleEl) titleEl.textContent = 'Task';
+                const editBtn = document.getElementById('taskDetailEditBtn');
+                if (editBtn) editBtn.style.display = 'none';
+                return;
+            }
+
+            const editBtn = document.getElementById('taskDetailEditBtn');
+            if (editBtn) editBtn.style.display = '';
+
+            const project = findAnyProject(comment.projectId);
+            const assignees = getTaskAssignees(comment);
+            const totalHours = getTaskTotalHours(comment);
+            const me = normalizeInitials(currentUser || '');
+
+            if (titleEl) titleEl.textContent = comment.completed ? 'Task · done' : 'Task';
+
+            const replies = (dailyComments || [])
+                .filter(c => c.parentId === comment.id)
+                .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+            const hoursRow = assignees.length
+                ? assignees.map(u => {
+                    const h = getTaskHoursForUser(comment, u);
+                    return `<span class="day-task-chip${u === me ? ' is-me' : ''}">${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
+                }).join('')
+                : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
+
+            body.innerHTML = `
+                <h3 class="task-detail-heading">${escapeHtml(comment.text).replace(/\n/g, '<br>')}</h3>
+
+                <div class="task-detail-meta">
+                    ${project ? `<span class="day-task-project">${escapeHtml(project.name)}</span>` : ''}
+                    <span class="task-detail-date">${formatDateDisplay(comment.date)}</span>
+                    <span class="task-detail-urgency urgency-${String(comment.urgency || 'Normal').toLowerCase()}">${escapeHtml(getUrgencyLabel(comment.urgency))}</span>
+                    ${comment.hasIncident ? '<span class="task-detail-incident">INCIDENT</span>' : ''}
+                    ${comment.isPersonal ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : ''}
+                    ${comment.completed ? '<span class="completion-badge">DONE</span>' : ''}
+                </div>
+
+                <div class="task-detail-block">
+                    <div class="task-detail-label">Responsible</div>
+                    <div class="day-task-meta">${hoursRow}</div>
+                </div>
+
+                <div class="task-detail-block">
+                    <div class="task-detail-label">Estimated effort</div>
+                    <div class="task-detail-value">${totalHours > 0 ? `${formatHours(totalHours)} h total` : 'Not estimated'}${
+                        totalHours > 0 && assignees.length > 1
+                            ? (Object.keys(comment.hoursByAssignee || {}).length ? ' · split per person' : ' · split evenly')
+                            : ''
+                    }</div>
+                </div>
+
+                <div class="task-detail-block">
+                    <div class="task-detail-label">Description</div>
+                    <div class="task-detail-value task-detail-description">${
+                        comment.description
+                            ? escapeHtml(comment.description).replace(/\n/g, '<br>')
+                            : '<span class="task-detail-empty">No description. Use Edit to add context, links or blockers.</span>'
+                    }</div>
+                </div>
+
+                <div class="task-detail-block">
+                    <div class="task-detail-label">Created</div>
+                    <div class="task-detail-value">${escapeHtml(comment.userName || 'ND')}${comment.time ? ` · ${escapeHtml(comment.time)}` : ''}</div>
+                </div>
+
+                ${replies.length ? `<div class="task-detail-block">
+                    <div class="task-detail-label">${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}</div>
+                    <div class="task-detail-replies">${replies.map(r => `
+                        <div class="reply-entry"><div class="reply-thread-line"></div><div class="reply-body">
+                            <div class="reply-header"><strong>${escapeHtml(r.userName || 'ND')}</strong> · ${formatDateDisplay(r.date || comment.date)}</div>
+                            <div class="reply-text">${escapeHtml(r.text).replace(/\n/g, '<br>')}</div>
+                        </div></div>`).join('')}</div>
+                </div>` : ''}
+
+                <div class="task-detail-actions">
+                    <label class="checkbox-label">
+                        <input type="checkbox" ${comment.completed ? 'checked' : ''}
+                               onchange="toggleCommentCompletionFromDetail(event, ${jsArg(comment.id)})">
+                        Mark as done
+                    </label>
+                </div>`;
+        }
+
+        async function toggleCommentCompletionFromDetail(event, commentId) {
+            if (event) event.stopPropagation();
+            const comment = (dailyComments || []).find(c => c.id === commentId);
+            if (!comment) return;
+
+            const { error } = await supabaseClient
+                .from('daily_comments')
+                .update({ completed: !comment.completed })
+                .eq('id', commentId);
+
+            if (error) {
+                console.error(error);
+                showToast('Error updating the task', 'error');
+                return;
+            }
+
+            comment.completed = !comment.completed;
+            renderTaskDetail();
+            renderActiveView();
+        }
         function openDailyCommentModal(dateKey, projectIdOverride = null) {
             openModal('dailyModal', '#commentText');
-            document.getElementById('dailyModalTitle').textContent = editingCommentId ? 'Edit daily comment' : 'New daily comment';
+            document.getElementById('dailyModalTitle').textContent = editingCommentId ? 'Edit task' : 'New task';
 
             syncTeamMembersInSelectors();
 
             const select = document.getElementById('commentProjectSelect');
             select.innerHTML = '<option value="">Select a project...</option>';
-            projects.forEach(p => {
+            // Solo proyectos vivos: no se crean tareas en algo archivado.
+            // Al editar, el proyecto de la tarea se añade aunque ya no lo
+            // esté, para no perder la referencia al guardar.
+            const selectable = getLiveProjects();
+            const editedComment = editingCommentId
+                ? dailyComments.find(c => c.id === editingCommentId)
+                : null;
+            if (editedComment && !selectable.some(p => p.id === editedComment.projectId)) {
+                const owner = findAnyProject(editedComment.projectId);
+                if (owner) selectable.push(owner);
+            }
+            selectable.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p.id;
                 opt.textContent = p.name;
@@ -1988,41 +3325,63 @@ function setDashboardFilter(field, value) {
             });
             document.getElementById('dailyModal').dataset.dateKey = dateKey;
 
-            if (editingCommentId) {
-                const comment = dailyComments.find(c => c.id === editingCommentId);
-                if (comment) {
-                    document.getElementById('commentProjectSelect').value = comment.projectId;
-                    document.getElementById('commentResponsible').value = comment.responsible || '';
-                    document.getElementById('commentUrgency').value = comment.urgency;
-                    document.getElementById('commentIncident').checked = comment.hasIncident;
-                    document.getElementById('commentPersonal').checked = !!comment.isPersonal;
-                    document.getElementById('commentText').value = comment.text;
-                }
+            const hoursInput = document.getElementById('commentHours');
+            const descInput = document.getElementById('commentDescription');
+
+            if (editedComment) {
+                document.getElementById('commentProjectSelect').value = editedComment.projectId;
+                document.getElementById('commentUrgency').value = editedComment.urgency;
+                document.getElementById('commentIncident').checked = editedComment.hasIncident;
+                document.getElementById('commentPersonal').checked = !!editedComment.isPersonal;
+                document.getElementById('commentText').value = editedComment.text;
+                if (descInput) descInput.value = editedComment.description || '';
+
+                dailyTaskResponsibles = getTaskAssignees(editedComment).slice();
+                dailyTaskHoursByAssignee = Object.assign({}, editedComment.hoursByAssignee || {});
+                // Si la tarea traía reparto explícito, se abre ya en modo
+                // "por persona" para que se vea y se pueda ajustar.
+                dailyTaskHoursCustom = Object.keys(dailyTaskHoursByAssignee).length > 0;
+                if (hoursInput) hoursInput.value = editedComment.estimatedHours || '';
             } else {
-                document.getElementById('commentResponsible').value = '';
                 document.getElementById('commentUrgency').value = 'Normal';
                 document.getElementById('commentIncident').checked = false;
                 document.getElementById('commentPersonal').checked = false;
                 document.getElementById('commentText').value = '';
+                if (descInput) descInput.value = '';
+                if (hoursInput) hoursInput.value = '';
+
+                // Por defecto, quien crea la tarea es responsable.
+                const me = normalizeInitials(currentUser || '');
+                dailyTaskResponsibles = (me && teamMembers.includes(me)) ? [me] : [];
+                dailyTaskHoursByAssignee = {};
+                dailyTaskHoursCustom = false;
             }
 
+            renderDailyTaskResponsibles();
+            renderDailyTaskHoursSplit();
             applyPersonalTaskRuleFromUI();
         }
 
+        // Una tarea personal es privada y solo tuya, así que no admite
+        // varios responsables: la lista se fuerza a ti y se bloquea.
         function applyPersonalTaskRuleFromUI() {
             const personalCheckbox = document.getElementById('commentPersonal');
-            const responsibleSelect = document.getElementById('commentResponsible');
-            if (!personalCheckbox || !responsibleSelect) return;
+            if (!personalCheckbox) return;
+
+            const hint = document.getElementById('commentResponsiblesHint');
 
             if (personalCheckbox.checked) {
                 const owner = normalizeInitials(currentUser || '');
-                responsibleSelect.value = owner;
-                responsibleSelect.setAttribute('disabled', 'disabled');
-                responsibleSelect.title = 'For personal tasks, the owner is the creator';
-            } else {
-                responsibleSelect.removeAttribute('disabled');
-                responsibleSelect.title = '';
+                dailyTaskResponsibles = owner ? [owner] : [];
+                dailyTaskHoursByAssignee = {};
+                dailyTaskHoursCustom = false;
+                if (hint) hint.textContent = 'A personal task is always yours alone.';
+            } else if (hint) {
+                hint.textContent = 'Pick everyone working on this. Hours are split between them.';
             }
+
+            renderDailyTaskResponsibles();
+            renderDailyTaskHoursSplit();
         }
 
         function onPersonalTaskToggle() {
@@ -2032,12 +3391,19 @@ function setDashboardFilter(field, value) {
         function closeDailyModal() {
             closeModal('dailyModal');
             document.getElementById('commentText').value = '';
-            document.getElementById('commentResponsible').value = '';
             document.getElementById('commentUrgency').value = 'Normal';
             document.getElementById('commentIncident').checked = false;
             document.getElementById('commentPersonal').checked = false;
-            document.getElementById('commentResponsible').removeAttribute('disabled');
-            document.getElementById('commentResponsible').title = '';
+
+            const desc = document.getElementById('commentDescription');
+            if (desc) desc.value = '';
+            const hours = document.getElementById('commentHours');
+            if (hours) hours.value = '';
+
+            dailyTaskResponsibles = [];
+            dailyTaskHoursByAssignee = {};
+            dailyTaskHoursCustom = false;
+
             editingCommentId = null;
         }
 
@@ -2045,9 +3411,39 @@ function setDashboardFilter(field, value) {
         async function saveDailyComment() {
             const projectId = document.getElementById('commentProjectSelect').value;
             const isPersonal = !!document.getElementById('commentPersonal').checked;
-            const manualResponsible = document.getElementById('commentResponsible').value.trim();
             const ownerInitials = normalizeInitials(currentUser || 'US');
-            const responsible = isPersonal ? ownerInitials : manualResponsible;
+
+            // Una tarea personal es siempre del creador, pase lo que pase
+            // en el picker.
+            const responsibles = isPersonal
+                ? (ownerInitials ? [ownerInitials] : [])
+                : sanitizeResponsiblesList(dailyTaskResponsibles);
+
+            // `responsible` (texto, columna antigua) se sigue escribiendo
+            // con el primero de la lista. Ver migración: hay consultas del
+            // equipo que la usan.
+            const responsible = responsibles[0] || '';
+
+            // Reparto de horas. Solo se guarda el jsonb si de verdad hay
+            // reparto a medida y para gente que sigue siendo responsable;
+            // si no, el reparto a partes iguales se deduce del total.
+            const estimatedHoursRaw = Number(document.getElementById('commentHours') && document.getElementById('commentHours').value);
+            let estimatedHours = Number.isFinite(estimatedHoursRaw) && estimatedHoursRaw > 0
+                ? Math.min(estimatedHoursRaw, 1000)
+                : 0;
+
+            let hoursByAssignee = {};
+            if (dailyTaskHoursCustom && responsibles.length) {
+                responsibles.forEach(u => {
+                    const value = Number(dailyTaskHoursByAssignee[u]);
+                    hoursByAssignee[u] = Number.isFinite(value) && value > 0 ? Math.min(value, 1000) : 0;
+                });
+                // El total pasa a ser la suma, para que nunca discrepe.
+                estimatedHours = Object.values(hoursByAssignee).reduce((s, h) => s + h, 0);
+                if (estimatedHours <= 0) hoursByAssignee = {};
+            }
+
+            const description = (document.getElementById('commentDescription') || {}).value || '';
             const urgency = document.getElementById('commentUrgency').value;
             const hasIncident = document.getElementById('commentIncident').checked;
             const text = document.getElementById('commentText').value.trim();
@@ -2078,6 +3474,10 @@ function setDashboardFilter(field, value) {
                         date: dateKey,
                         time: timeStr,
                         responsible,
+                        responsibles,
+                        description,
+                        estimated_hours: estimatedHours,
+                        hours_by_assignee: hoursByAssignee,
                         is_personal: isPersonal,
                         owner_initials: ownerInitials,
                         urgency,
@@ -2111,6 +3511,10 @@ function setDashboardFilter(field, value) {
                         date: dateKey,
                         time: timeStr,
                         responsible,
+                        responsibles,
+                        description,
+                        estimated_hours: estimatedHours,
+                        hours_by_assignee: hoursByAssignee,
                         is_personal: isPersonal,
                         owner_initials: ownerInitials,
                         urgency,
@@ -2726,20 +4130,6 @@ function handleProgressWheel(event, projectId, currentValue) {
     updateProjectProgress(projectId, newValue);
 }
 
-function handleCapacityWheel(event, userInitials, weekKey, currentValue) {
-    event.preventDefault();
-
-    const delta = event.deltaY < 0 ? 5 : -5;
-    let value = parseInt(currentValue, 10);
-    if (isNaN(value)) value = 0;
-
-    let newValue = value + delta;
-    if (newValue < 0) newValue = 0;
-    if (newValue > 100) newValue = 100;
-
-    updateCapacity(userInitials, weekKey, newValue);
-}
-
 
 // =====================================================
 // ================= CAPACIDAD SEMANAL =================
@@ -2769,10 +4159,30 @@ async function loadCapacities() {
     }));
 }
 
+// =====================================================
+// ============ WIDGET DE CAPACIDAD SEMANAL ============
+//
+// Ya no son casillas de % a mano. Ahora sale de computeWeekCapacity(),
+// que suma las horas de TODAS las tareas de la semana de cada persona
+// en TODOS los proyectos. Así, estando en la ficha de un proyecto, se
+// ve si a quien le quieres dar una tarea le queda hueco en la semana
+// o lo tiene lleno con otras cosas.
+//
+// Cada fila muestra dos cosas distintas a propósito:
+//   - la carga TOTAL de la persona (todos los proyectos), que es lo
+//     que decide si puede con más trabajo;
+//   - cuánto de esa carga es de ESTE proyecto, para situarla.
+// =====================================================
+
+// Fila cuyo override se está editando: { user, weekKey } o null.
+let capacityOverrideEditing = null;
+
 function renderCapacityWidget() {
     if (!currentProjectId) return '';
 
-    const week1Start = new Date(capacityWeekStart);
+    const weekStart = new Date(capacityWeekStart);
+    const weekKey = formatDateKey(weekStart);
+    const capacity = computeWeekCapacity(weekKey);
 
     const formatWeek = (date) => {
         const start = new Date(date);
@@ -2781,113 +4191,212 @@ function renderCapacityWidget() {
         return `${start.getDate()}/${start.getMonth() + 1} - ${end.getDate()}/${end.getMonth() + 1}`;
     };
 
-            let html = `<div class='widget-box capacity-widget' id='capacityWidget'>
+    const isCurrentWeek = weekKey === formatDateKey(getMonday(new Date()));
+
+    // Orden: el equipo en su orden habitual, y al final quien ya no
+    // está en el directorio pero aún arrastra horas de tareas viejas.
+    const rows = teamMembers
+        .map(u => capacity[u])
+        .filter(Boolean)
+        .concat(Object.values(capacity).filter(e => e.formerMember));
+
+    const teamAllocated = rows.reduce((sum, e) => sum + e.effectiveHours, 0);
+    const teamBaseline = rows.reduce((sum, e) => sum + e.baselineHours, 0);
+    const teamPercent = teamBaseline > 0 ? Math.round((teamAllocated / teamBaseline) * 100) : 0;
+
+    let html = `<div class='widget-box capacity-widget' id='capacityWidget'>
         <div class='widget-header'>
             <div class="widget-title">Weekly Capacity</div>
+            <span class="capacity-widget-hint" title="Hours come from the estimated effort on every task assigned to each person that week, across all projects.">all projects</span>
         </div>
 
         <div class="capacity-week-nav widget-week-nav">
             <button type="button" class="widget-nav-btn" onclick="previousCapacityWeek()" aria-label="Previous week">◀</button>
-            <div class="capacity-week-info">${formatWeek(week1Start)}</div>
+            <div class="capacity-week-info">${formatWeek(weekStart)}${isCurrentWeek ? ' <span class="week-current-badge">CURRENT</span>' : ''}</div>
             <button type="button" class="widget-nav-btn" onclick="nextCapacityWeek()" aria-label="Next week">▶</button>
         </div>
-        
-        <div class="capacity-weeks-container">`;
 
-            // Current week only (navigable via the arrows above)
-            html += renderWeekBlock(week1Start);
+        <div class="capacity-rows">`;
 
-            html += `</div></div>`;
-            return html;
-        }
+    rows.forEach(entry => {
+        const thisProjectHours = entry.byProject[currentProjectId] || 0;
+        const loadClass = capacityLoadClass(entry.percent);
+        const barWidth = Math.min(100, entry.percent);
+        const isEditing = capacityOverrideEditing
+            && capacityOverrideEditing.user === entry.user
+            && capacityOverrideEditing.weekKey === weekKey;
 
-        function renderWeekBlock(weekStart, label) {
-            const weekKey = formatDateKey(weekStart);
+        // Detalle secundario: de qué se compone la carga.
+        const details = [];
+        if (thisProjectHours > 0) details.push(`${formatHours(thisProjectHours)}h here`);
+        if (entry.pendingHours > 0 && entry.overrideHours === null) details.push(`${formatHours(entry.pendingHours)}h pending`);
+        if (entry.overrideHours !== null) details.push(`manual${entry.note ? `: ${escapeHtml(entry.note)}` : ''}`);
+        if (!details.length) details.push(entry.taskCount ? 'no hours estimated' : 'nothing assigned');
 
-            let html = `<div class="capacity-week-block">
-        ${label ? `<div class="capacity-week-label">${label}</div>` : ''}`;
-
-            teamMembers.forEach(user => {
-                const existing = projectCapacities.find(c =>
-                    c.projectId === currentProjectId &&
-                    c.userInitials === user &&
-                    c.weekStart === weekKey
-                );
-
-                const value = existing ? existing.capacityPercent : 0;
-
-                html += `<div class="capacity-user-row">
-            <div class="capacity-user-icon">${user}</div>
-            <div class="capacity-input-wrapper">
-                <input type="number"
-                       class="capacity-input"
-                       aria-label="Capacity for ${user} this week (%)"
-                       value="${value}"
-                       min="0"
-                       max="100"
-                       onchange="updateCapacity('${user}', '${weekKey}', this.value)"
-                       onwheel="handleCapacityWheel(event, '${user}', '${weekKey}', this.value)"
-                       onclick="this.select()"
-                       placeholder="0">
-                <span class="capacity-percent-symbol">%</span>
+        html += `<div class="capacity-row${entry.overrideHours !== null ? ' is-overridden' : ''}">
+            <div class="capacity-user-icon" title="${escapeHtml(entry.user)}${entry.formerMember ? ' (no longer in the team)' : ''}">${escapeHtml(entry.user)}</div>
+            <div class="capacity-row-body">
+                <div class="capacity-row-top">
+                    <div class="capacity-bar" role="img" aria-label="${entry.percent}% of ${formatHours(entry.baselineHours)} hours">
+                        <div class="capacity-bar-fill ${loadClass}" style="width:${barWidth}%"></div>
+                    </div>
+                    <button type="button" class="capacity-figure ${loadClass}"
+                            title="Click to set a manual value for this week"
+                            onclick="startCapacityOverrideEdit(${jsArg(entry.user)})">
+                        <strong>${entry.percent}%</strong>
+                        <span class="capacity-figure-hours">${formatHours(entry.effectiveHours)}/${formatHours(entry.baselineHours)}h</span>
+                    </button>
+                </div>
+                <div class="capacity-row-detail">${details.join(' · ')}</div>
+                ${isEditing ? `<div class="capacity-override-form">
+                    <label class="visually-hidden" for="capacityOverrideInput">Manual hours for ${escapeHtml(entry.user)}</label>
+                    <input type="number" id="capacityOverrideInput" min="0" max="1000" step="0.5"
+                           value="${entry.overrideHours !== null ? entry.overrideHours : formatHours(entry.taskHours)}"
+                           onkeydown="if(event.key==='Enter'){event.preventDefault();saveCapacityOverride(${jsArg(entry.user)});}if(event.key==='Escape'){cancelCapacityOverrideEdit();}">
+                    <span class="capacity-override-unit">h</span>
+                    <button type="button" class="btn btn-primary capacity-override-save" onclick="saveCapacityOverride(${jsArg(entry.user)})">Save</button>
+                    ${entry.overrideHours !== null ? `<button type="button" class="comment-action-btn" onclick="clearCapacityOverride(${jsArg(entry.user)})">Use calculated</button>` : ''}
+                    <button type="button" class="comment-action-btn" onclick="cancelCapacityOverrideEdit()">Cancel</button>
+                </div>` : ''}
             </div>
         </div>`;
-            });
+    });
 
-            html += `</div>`;
-            return html;
-        }
+    html += `</div>
+        <div class="capacity-total ${capacityLoadClass(teamPercent)}">
+            <span>Team</span>
+            <strong>${formatHours(teamAllocated)}/${formatHours(teamBaseline)}h · ${teamPercent}%</strong>
+        </div>
+    </div>`;
 
-        async function updateCapacity(userInitials, weekStart, value) {
-            let capacity = parseInt(value);
-            if (isNaN(capacity)) capacity = 0;
-            if (capacity < 0) capacity = 0;
-            if (capacity > 100) capacity = 100;
+    return html;
+}
 
-            const existingIndex = projectCapacities.findIndex(c =>
-                c.projectId === currentProjectId &&
-                c.userInitials === userInitials &&
-                c.weekStart === weekStart
-            );
+// =====================================================
+// ===== UNIDAD DE LECTURA (% u HORAS) POR CELDA =======
+// En la tabla del dashboard cada celda recuerda si se lee en % o en
+// horas. Es por (persona, columna) y no global porque en el equipo
+// cada uno lo mira de una manera, y cambiarlo para ti no debe
+// cambiárselo a los demás. Se guarda en localStorage del navegador:
+// es una preferencia de lectura, no un dato del proyecto.
+// =====================================================
 
-            if (existingIndex >= 0) {
-                // Actualizar
-                projectCapacities[existingIndex].capacityPercent = capacity;
+const CAPACITY_UNITS_STORAGE_KEY = 'pt_capacity_units_v1';
+let capacityUnits = (() => {
+    try {
+        const raw = localStorage.getItem(CAPACITY_UNITS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch {
+        return {};
+    }
+})();
 
-                const { error } = await supabaseClient
-                    .from('project_capacities')
-                    .update({ capacity_percent: capacity })
-                    .eq('id', projectCapacities[existingIndex].id);
+function capacityUnitKey(user, column) {
+    return `${normalizeInitials(user)}:${column}`;
+}
 
-                if (error) { console.error(error); showToast('Could not save capacity', 'error'); }
-            } else {
-                // Crear
-                const newId = generateId();
-                const newCapacity = {
-                    id: newId,
-                    projectId: currentProjectId,
-                    userInitials,
-                    weekStart,
-                    capacityPercent: capacity
-                };
+function getCapacityUnit(user, column) {
+    return capacityUnits[capacityUnitKey(user, column)] === 'hours' ? 'hours' : 'percent';
+}
 
-                projectCapacities.push(newCapacity);
+function toggleCapacityUnit(user, column) {
+    const key = capacityUnitKey(user, column);
+    capacityUnits[key] = getCapacityUnit(user, column) === 'hours' ? 'percent' : 'hours';
+    try {
+        localStorage.setItem(CAPACITY_UNITS_STORAGE_KEY, JSON.stringify(capacityUnits));
+    } catch {
+        // Si el navegador bloquea storage, la preferencia solo dura la sesión.
+    }
+    renderDashboard();
+}
 
-                const { error } = await supabaseClient
-                    .from('project_capacities')
-                    .insert({
-                        id: newId,
-                        project_id: currentProjectId,
-                        user_initials: userInitials,
-                        week_start: weekStart,
-                        capacity_percent: capacity
-                    });
+function startCapacityOverrideEdit(user) {
+    const weekKey = formatDateKey(capacityWeekStart);
+    capacityOverrideEditing = { user: normalizeInitials(user), weekKey };
+    renderCapacityWidgetInPlace();
+    const input = document.getElementById('capacityOverrideInput');
+    if (input) { input.focus(); input.select(); }
+}
 
-                if (error) { console.error(error); showToast('Could not save capacity', 'error'); }
-            }
+function cancelCapacityOverrideEdit() {
+    capacityOverrideEditing = null;
+    renderCapacityWidgetInPlace();
+}
 
-            renderCapacityWidgetInPlace();
-        }
+// El override se guarda en HORAS (ver migración): es la unidad real
+// del modelo, y el % depende de la jornada de cada persona.
+async function saveCapacityOverride(user) {
+    const input = document.getElementById('capacityOverrideInput');
+    if (!input) return;
+
+    const initials = normalizeInitials(user);
+    const weekKey = formatDateKey(capacityWeekStart);
+    let hours = Number(input.value);
+    if (!Number.isFinite(hours) || hours < 0) hours = 0;
+    hours = Math.min(hours, 1000);
+
+    const { error } = await supabaseClient
+        .from(CAPACITY_OVERRIDES_TABLE)
+        .upsert({
+            user_initials: initials,
+            week_start: weekKey,
+            override_hours: hours,
+            created_by: normalizeInitials(currentUser || ''),
+            updated_at: new Date().toISOString()
+        }, { onConflict: 'user_initials,week_start' });
+
+    if (error) {
+        console.error(error);
+        showToast(formatSupabaseError(error, 'Could not save the manual capacity'), 'error');
+        return;
+    }
+
+    const existing = capacityOverrides.find(o => o.userInitials === initials && o.weekStart === weekKey);
+    if (existing) {
+        existing.overrideHours = hours;
+    } else {
+        capacityOverrides.push({
+            userInitials: initials,
+            weekStart: weekKey,
+            overrideHours: hours,
+            note: '',
+            createdBy: normalizeInitials(currentUser || '')
+        });
+    }
+
+    capacityOverrideEditing = null;
+    renderCapacityWidgetInPlace();
+    // El dashboard muestra los mismos números: hay que repintarlo.
+    if (currentView === 'dashboard') renderDashboard();
+    showToast('Manual capacity saved', 'success', { key: 'autosave', duration: 1500 });
+}
+
+async function clearCapacityOverride(user) {
+    const initials = normalizeInitials(user);
+    const weekKey = formatDateKey(capacityWeekStart);
+
+    const { error } = await supabaseClient
+        .from(CAPACITY_OVERRIDES_TABLE)
+        .delete()
+        .eq('user_initials', initials)
+        .eq('week_start', weekKey);
+
+    if (error) {
+        console.error(error);
+        showToast(formatSupabaseError(error, 'Could not clear the manual capacity'), 'error');
+        return;
+    }
+
+    capacityOverrides = capacityOverrides.filter(o =>
+        !(o.userInitials === initials && o.weekStart === weekKey)
+    );
+
+    capacityOverrideEditing = null;
+    renderCapacityWidgetInPlace();
+    if (currentView === 'dashboard') renderDashboard();
+    showToast('Back to the calculated value', 'success', { key: 'autosave', duration: 1500 });
+}
 
         function previousCapacityWeek() {
             capacityWeekStart.setDate(capacityWeekStart.getDate() - 7);
@@ -3597,7 +5106,9 @@ function renderLastStatusWidget() {
                 return;
             }
 
-            const project = projects.find(p => p.id === currentProjectId);
+            // findAnyProject y no projects.find: desde la papelera o desde
+            // Archivados se puede abrir la ficha para consultarla.
+            const project = findAnyProject(currentProjectId);
             if (!project) {
                 document.getElementById('fichaView').innerHTML = `<div class="empty-state">Project not found.</div>`;
                 return;
@@ -3608,11 +5119,29 @@ function renderLastStatusWidget() {
             const RING_C = 188.5; // 2·π·30
             const ringOffset = RING_C - (RING_C * progressPercent / 100);
 
+            // Aviso cuando la ficha no es de un proyecto vivo, para que
+            // nadie edite un proyecto archivado creyendo que está activo.
+            let stateBanner = '';
+            if (project.deletedAt) {
+                stateBanner = `<div class="ficha-state-banner ficha-state-banner--deleted" role="status">
+        <span>In the bin${project.deletedBy ? ` · moved by ${escapeHtml(project.deletedBy)}` : ''}${project.deletedAt ? ` · ${formatDateDisplay(String(project.deletedAt).slice(0, 10))}` : ''}</span>
+        <button type="button" class="section-action-btn" onclick="restoreProjectFromBin(${jsArg(project.id)})">Restore</button>
+    </div>`;
+            } else if (isProjectArchived(project)) {
+                stateBanner = `<div class="ficha-state-banner" role="status">
+        <span>Archived${project.archivedBy ? ` by ${escapeHtml(project.archivedBy)}` : ''}${project.archivedAt ? ` · ${formatDateDisplay(String(project.archivedAt).slice(0, 10))}` : ''}</span>
+        <button type="button" class="section-action-btn" onclick="setProjectArchived(${jsArg(project.id)}, false)">Unarchive</button>
+    </div>`;
+            }
+
             // --- Main render ---
-            let html = `<div class="ficha-header">
+            let html = `${stateBanner}<div class="ficha-header">
     <div class="project-meta-row">
         <div class="project-title-section">
-            <div class="ficha-title">${escapeHtml(project.name)}
+            <div class="ficha-title"><input type="text" class="ficha-title-input" value="${escapeHtml(project.name)}"
+                       aria-label="Project name" title="Click to rename"
+                       onchange="renameProjectInline(${jsArg(project.id)}, this)"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}if(event.key==='Escape'){this.value=${jsArg(project.name)};this.blur();}">
                 <span class="project-mini-indicators">
                     <span class="mini-indicator priority-${(project.priority || 'Media').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Priority: ${getPriorityLabel(project.priority)}. Click to change" onclick="toggleIndicatorDropdown(event, 'priority')" onkeydown="handleIndicatorKey(event, 'priority')">
                         <span class="mini-label">Priority:</span>
@@ -3886,7 +5415,23 @@ function renderLastStatusWidget() {
                     const yy = String(dateObj.getFullYear()).slice(-2);
                     const formattedDate = `${dd}/${mm}/${yy}`;
 
-                    const responsable = comment.responsible || 'ND';
+                    // Responsables y horas: lo que convierte el panel en un
+                    // panel de tareas y no solo de comentarios.
+                    const assignees = getTaskAssignees(comment);
+                    const me = normalizeInitials(currentUser || '');
+                    const ownerChips = assignees.length
+                        ? assignees.map(u => {
+                            const h = getTaskHoursForUser(comment, u);
+                            return `<span class="day-task-chip${u === me ? ' is-me' : ''}">${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
+                        }).join('')
+                        : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
+                    const totalHours = getTaskTotalHours(comment);
+                    const hoursChip = totalHours > 0
+                        ? `<span class="comment-hours-chip" title="Estimated effort">${formatHours(totalHours)}h</span>`
+                        : '';
+                    const descChip = comment.description
+                        ? '<span class="comment-desc-chip" title="Has a description">≡</span>'
+                        : '';
 
                     // Author initials (whoever wrote the comment); defaults to 'User'.
                     const autorName = escapeHtml(comment.userName || 'User');
@@ -3908,15 +5453,18 @@ function renderLastStatusWidget() {
                          <div class="comment-avatar" title="Author: ${autorName}">${iniciales}</div>
                          <div class="comment-head-meta">
                             <span class="comment-date">${formattedDate}</span>
-                            <span class="comment-resp-chip">Owner: <strong>${escapeHtml(responsable)}</strong></span>
+                            <span class="comment-owner-chips">${ownerChips}</span>
+                            ${hoursChip}${descChip}
                          </div>
-                         
+
                          ${completedBadge}${personalBadge}
                     </div>
                 </div>
-                <div class="comment-text comment-indent">
+                <button type="button" class="comment-text comment-indent comment-text--clickable"
+                        title="Open task details"
+                        onclick="openTaskDetail(${jsArg(comment.id)})">
                     ${escapeHtml(comment.text).replace(/\n/g, '<br>')}
-                </div>
+                </button>
                 <div class="comment-actions comment-actions--inline comment-indent">
                     ${hasReplies ? `<button type="button" class="comment-action-btn comment-thread-btn" aria-expanded="${isExpanded}" onclick="toggleCommentThreadFromFicha('${comment.id}')">${replies.length} ${replies.length === 1 ? 'reply' : 'replies'} ${isExpanded ? '▲' : '▼'}</button>` : ''}
                     <button type="button" class="comment-action-btn comment-reply-btn" onclick="toggleReplyFormFromFicha('${comment.id}')">↩ Reply</button>
@@ -4118,9 +5666,16 @@ function formatMonthLabelShort(monthKey) {
 
 function renderDashboard() {
     const container = document.getElementById('dashboardView');
-    
+
     container.innerHTML = '';
-    
+
+    // Sombra deliberada de la global `projects`: el dashboard solo
+    // reporta sobre proyectos vivos. Declarándolo aquí, las ~15
+    // lecturas de `projects` que hay más abajo excluyen los archivados
+    // sin tener que tocarlas una por una. Los borrados ya no están en
+    // la global (viven en deletedProjects).
+    const projects = getLiveProjects();
+
     if (!projects || !projects.length) {
         container.innerHTML = `<div class="empty-state">No projects yet. Create one to see the dashboard.</div>`;
         return;
@@ -4413,7 +5968,9 @@ function renderDashboard() {
         </div>
     </div>`;
 
-    // Widget de dedicación
+    // Widget de dedicación del equipo. Las dos semanas salen del mismo
+    // computeWeekCapacity() que el widget de la ficha, así que los
+    // números coinciden siempre.
     const week1Start = new Date(capacityWeekStart);
     const week2Start = new Date(capacityWeekStart);
     week2Start.setDate(week2Start.getDate() + 7);
@@ -4421,45 +5978,79 @@ function renderDashboard() {
     const week1Key = formatDateKey(week1Start);
     const week2Key = formatDateKey(week2Start);
 
+    const cap1 = computeWeekCapacity(week1Key);
+    const cap2 = computeWeekCapacity(week2Key);
+
+    const capRows = teamMembers
+        .map(u => ({ user: u, current: cap1[u], next: cap2[u] }))
+        .filter(r => r.current && r.next);
+
+    // Celda de capacidad. Es un botón: pulsarla cambia la unidad de esa
+    // celda (% <-> horas) sin tocar las de los demás, porque cada
+    // persona del equipo prefiere leerlo de una manera.
+    const capacityCell = (user, column, entry) => {
+        const unit = getCapacityUnit(user, column);
+        const loadClass = capacityLoadClass(entry.percent);
+        const value = unit === 'hours'
+            ? `${formatHours(entry.effectiveHours)}<span class="cap-unit">/${formatHours(entry.baselineHours)}h</span>`
+            : `${entry.percent}<span class="cap-unit">%</span>`;
+        const other = unit === 'hours' ? `${entry.percent}%` : `${formatHours(entry.effectiveHours)}/${formatHours(entry.baselineHours)}h`;
+        return `<td class="cap-percent dash-num-center">
+            <button type="button" class="cap-toggle ${loadClass}"
+                    title="${other} — click to switch to ${unit === 'hours' ? 'percent' : 'hours'}"
+                    aria-label="${entry.user} ${column} load: ${other}. Click to switch units."
+                    onclick="toggleCapacityUnit(${jsArg(user)}, ${jsArg(column)})">
+                ${value}${entry.overrideHours !== null ? '<span class="cap-manual" title="Manual value">M</span>' : ''}
+            </button>
+        </td>`;
+    };
+
+    const sumCurrent = capRows.reduce((s, r) => s + r.current.effectiveHours, 0);
+    const sumNext = capRows.reduce((s, r) => s + r.next.effectiveHours, 0);
+    const sumBase = capRows.reduce((s, r) => s + r.current.baselineHours, 0);
+    const sumBaseNext = capRows.reduce((s, r) => s + r.next.baselineHours, 0);
+    const pctCurrent = sumBase > 0 ? Math.round((sumCurrent / sumBase) * 100) : 0;
+    const pctNext = sumBaseNext > 0 ? Math.round((sumNext / sumBaseNext) * 100) : 0;
+
     html += `
     <div class="dashboard-capacity-section">
         <div class="capacity-card">
             <h3 class="capacity-title">Team Weekly Allocation</h3>
-            <p class="capacity-subtitle">Sum of allocated capacity across all projects. Over 100% means overload.</p>
+            <p class="capacity-subtitle">Estimated hours on every task assigned that week, across all projects. Click any figure to switch between % and hours. Over 100% means overload.</p>
             <table class="capacity-table">
                 <thead>
                     <tr>
                         <th>User</th>
-                        <th class="dash-num-center">Current</th>
-                        <th class="dash-num-center">Next</th>
+                        <th class="dash-num-center">Current<span class="cap-th-week">${formatDateKey(week1Start).slice(5).replace('-', '/')}</span></th>
+                        <th class="dash-num-center">Next<span class="cap-th-week">${formatDateKey(week2Start).slice(5).replace('-', '/')}</span></th>
                     </tr>
                 </thead>
                 <tbody>`;
 
-    teamMembers.forEach(user => {
-        const capsWeek1 = projectCapacities.filter(c =>
-            c.userInitials === user && c.weekStart === week1Key
-        );
-        const capsWeek2 = projectCapacities.filter(c =>
-            c.userInitials === user && c.weekStart === week2Key
-        );
-
-        const percent1 = capsWeek1.reduce((sum, c) => sum + (c.capacityPercent || 0), 0);
-        const percent2 = capsWeek2.reduce((sum, c) => sum + (c.capacityPercent || 0), 0);
-
-        const colorClass1 = percent1 > 100 ? 'overcapacity' : percent1 >= 80 ? 'high-capacity' : '';
-        const colorClass2 = percent2 > 100 ? 'overcapacity' : percent2 >= 80 ? 'high-capacity' : '';
-
+    capRows.forEach(row => {
         html += `
                     <tr>
-                        <td class="cap-user"><div class="user-avatar">${user}</div></td>
-                        <td class="cap-percent dash-num-center ${colorClass1}">${percent1}%</td>
-                        <td class="cap-percent dash-num-center ${colorClass2}">${percent2}%</td>
+                        <td class="cap-user"><div class="user-avatar">${escapeHtml(row.user)}</div></td>
+                        ${capacityCell(row.user, 'current', row.current)}
+                        ${capacityCell(row.user, 'next', row.next)}
                     </tr>`;
     });
 
     html += `
                 </tbody>
+                <tfoot>
+                    <tr class="cap-total-row">
+                        <td class="cap-user"><span class="cap-total-label">Team</span></td>
+                        <td class="cap-percent dash-num-center ${capacityLoadClass(pctCurrent)}">
+                            <strong>${formatHours(sumCurrent)}/${formatHours(sumBase)}h</strong>
+                            <span class="cap-total-pct">${pctCurrent}%</span>
+                        </td>
+                        <td class="cap-percent dash-num-center ${capacityLoadClass(pctNext)}">
+                            <strong>${formatHours(sumNext)}/${formatHours(sumBaseNext)}h</strong>
+                            <span class="cap-total-pct">${pctNext}%</span>
+                        </td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>`;
@@ -4805,13 +6396,18 @@ function sortDailyProjects(projects) {
 
         async function loadDataFromSupabase(skipRender = false) {
             // Todas las lecturas son independientes: se lanzan en paralelo
-            const [, , , , , , projectsResult, commentsResult] = await Promise.all([
+            // OJO: el destructuring es posicional. Si añades una lectura a
+            // este array, añade también un hueco aquí o projectsResult pasará
+            // a apuntar a la lectura equivocada.
+            const [, , , , , , , , projectsResult, commentsResult] = await Promise.all([
                 loadCapacities(),
                 loadProjectStatuses(),
                 loadProjectNotes(),
                 loadWeeklyTasks(),
                 loadIncidents(),
                 loadDayPersonalTasks(),
+                loadDayTasks(),
+                loadCapacityOverrides(),
                 supabaseClient.from('projects').select('*').order('created_at', { ascending: true }),
                 supabaseClient.from('daily_comments').select('*').order('created_at', { ascending: true })
             ]);
@@ -4830,7 +6426,7 @@ function sortDailyProjects(projects) {
                 return;
             }
 
-            projects = (projData || []).map(p => ({
+            const mapProjectRow = (p) => ({
                 id: p.id,
                 name: p.name || '(No name)',
                 startDate: p.start_date || null,
@@ -4850,8 +6446,21 @@ function sortDailyProjects(projects) {
                 progress: p.progress || 0,
                 fte: p.fte,
                 responsibles: sanitizeResponsiblesList(p.responsibles),
+                archivedAt: p.archived_at || null,
+                archivedBy: p.archived_by || '',
+                deletedAt: p.deleted_at || null,
+                deletedBy: p.deleted_by || '',
                 createdAt: p.created_at
-            }));
+            });
+
+            // Los borrados se apartan en deletedProjects. Todo lo que ya
+            // recorría `projects` (daily, dashboard, selectores, capacidad)
+            // deja de verlos sin tener que tocar cada sitio.
+            const allProjectRows = (projData || []).map(mapProjectRow);
+            projects = allProjectRows.filter(p => !p.deletedAt);
+            deletedProjects = allProjectRows
+                .filter(p => p.deletedAt)
+                .sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
 
             const projectsWithExcludedResponsibles = (projData || [])
                 .map(p => {
@@ -4888,6 +6497,17 @@ function sortDailyProjects(projects) {
                 date: c.date,
                 time: c.time,
                 responsible: c.responsible,
+                // Fuente de verdad para los responsables. Si la fila es
+                // anterior a la migración y aún no tiene array, se cae al
+                // responsable único para no perderlo.
+                responsibles: sanitizeResponsiblesList(
+                    (Array.isArray(c.responsibles) && c.responsibles.length)
+                        ? c.responsibles
+                        : (c.responsible ? [c.responsible] : [])
+                ),
+                description: c.description || '',
+                estimatedHours: Number(c.estimated_hours) || 0,
+                hoursByAssignee: normalizeHoursByAssignee(c.hours_by_assignee),
                 isPersonal: !!c.is_personal,
                 ownerInitials: normalizeInitials(c.owner_initials || c.user_name || ''),
                 urgency: c.urgency || 'Normal',
@@ -4909,7 +6529,7 @@ function sortDailyProjects(projects) {
                 // Seleccionar el primer proyecto ACTIVO (en curso; si no hay, en BAU)
                 const activeProject = projects.find(p => getProjectGroup(p) === 'activos')
                     || projects.find(p => getProjectGroup(p) === 'bau');
-                currentProjectId = activeProject ? activeProject.id : projects[0].id;
+                currentProjectId = activeProject ? activeProject.id : (getLiveProjects()[0] || projects[0]).id;
             }
             updateWeekInfo();
 
@@ -4948,6 +6568,10 @@ function sortDailyProjects(projects) {
             if (dayModal && dayModal.classList.contains('active')) {
                 renderDayPersonalTasksModal();
             }
+            const detailModal = document.getElementById('taskDetailModal');
+            if (detailModal && detailModal.classList.contains('active') && taskDetailId) {
+                renderTaskDetail();
+            }
         }
 
         async function handleRealtimeChange() {
@@ -4975,7 +6599,7 @@ function sortDailyProjects(projects) {
             }, 50);
         });
 
-        ['projects', 'daily_comments', 'project_notes', 'project_weekly_tasks', 'project_incidents', DAY_PERSONAL_TASKS_TABLE]
+        ['projects', 'daily_comments', 'project_notes', 'project_weekly_tasks', 'project_incidents', DAY_PERSONAL_TASKS_TABLE, DAY_TASKS_TABLE, CAPACITY_OVERRIDES_TABLE, APP_USERS_TABLE]
             .forEach(table => {
                 supabaseClient
                     .channel(`${table}-changes`)
@@ -5710,6 +7334,8 @@ function sortDailyProjects(projects) {
 
             if (initialsInput) initialsInput.value = profile.initials || '';
             if (emailInput) emailInput.value = profile.email || '';
+            const weeklyHoursInput = document.getElementById('settingsWeeklyHours');
+            if (weeklyHoursInput) weeklyHoursInput.value = normalizeWeeklyHours(profile.weeklyHours);
             if (passwordInput) passwordInput.value = '';
             if (passwordConfirmInput) passwordConfirmInput.value = '';
             if (errorEl) errorEl.textContent = '';
@@ -5778,7 +7404,10 @@ function sortDailyProjects(projects) {
                 await saveUserProfile(currentInitials, {
                     initials: newInitials,
                     email: newEmail,
-                    passwordHash: nextPasswordHash
+                    passwordHash: nextPasswordHash,
+                    weeklyHours: normalizeWeeklyHours(
+                        (document.getElementById('settingsWeeklyHours') || {}).value
+                    )
                 });
             } catch (error) {
                 errorEl.textContent = error && error.message ? error.message : 'Error saving settings.';

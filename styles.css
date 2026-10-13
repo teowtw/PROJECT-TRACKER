@@ -5,6 +5,7 @@
 }
 
 :root {
+    color-scheme: light;
     /* ===== WTW Purple — acento primario ===== */
     --color-primary: #642C99;
     --color-primary-hover: #52247D;
@@ -35,7 +36,7 @@
     --color-ink: #2A124E;
     --color-on-ink: #ffffff;
     --color-muted: #6B6478;
-    --color-faint: #9992A6;
+    --color-faint: #756E85;
     --color-text: #2A124E;
     --color-text-secondary: var(--color-muted);
     --color-text-muted: var(--color-muted);
@@ -98,6 +99,16 @@
     /* ===== Purple accent system ===== */
     --color-accent: #642C99;
     --color-accent-strong: #7A4AB0;
+    /* Accent used as TEXT on a soft/tinted chip. Kept separate from
+       --color-accent-strong, which is a filled-surface colour: a tone light
+       enough to read on a dark chip is far too light to put white text on. */
+    --color-accent-text: #642C99;
+    /* Misma idea para los colores semánticos: el tono de relleno es
+       demasiado claro para leerlo sobre su propio fondo "soft". */
+    --color-negative-text: #B3262B;
+    --color-attention-text: #8A5A06;
+    /* Hover for filled accent surfaces (white text sits on top of these). */
+    --color-accent-hover: #52247D;
     --color-accent-soft: rgba(100, 44, 153, 0.1);
     --color-accent-cyan: #0ea5e9;
     --progress-grad-from: #642C99;
@@ -122,6 +133,9 @@
 
 /* ===== Dark mode (WTW Purple — dark surface) ===== */
 html[data-theme="dark"] {
+    /* Native widgets (caret, date pickers, select popups, scrollbars)
+       must follow the theme, or Chrome paints them light-on-light. */
+    color-scheme: dark;
     --color-primary: #B284E6;
     --color-primary-hover: #C7A6EE;
     --color-primary-soft: rgba(178, 132, 230, 0.14);
@@ -147,12 +161,17 @@ html[data-theme="dark"] {
     --color-ink: #F4F1FA;
     --color-on-ink: #241A38;
     --color-muted: #ADA3C2;
-    --color-faint: #7E7395;
+    --color-faint: #9E94B8;
     --color-text: #F0EDF7;
 
     /* Purple accent system */
     --color-accent: #7A4AB0;
     --color-accent-strong: #B284E6;
+    --color-accent-text: #C7A6EE;
+    /* En oscuro los tonos de relleno ya contrastan sobre el fondo. */
+    --color-negative-text: var(--color-negative);
+    --color-attention-text: var(--color-attention);
+    --color-accent-hover: #8E5BC6;
     --color-accent-soft: rgba(178, 132, 230, 0.16);
     --color-accent-cyan: #38bdf8;
     --progress-grad-from: #7A4AB0;
@@ -349,6 +368,8 @@ button:disabled {
     font-size: 14px;
     padding: 10px 12px;
     outline: none;
+    background: var(--color-input-bg);
+    color: var(--color-text);
     transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
@@ -360,7 +381,7 @@ button:disabled {
 .login-button {
     border: none;
     border-radius: 999px;
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: #ffffff;
     font-size: 14px;
     font-weight: 600;
@@ -371,7 +392,7 @@ button:disabled {
 }
 
 .login-button:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
     transform: translateY(-1px);
 }
 
@@ -646,7 +667,7 @@ button:disabled {
 }
 
 .btn-new-project:hover {
-    background: var(--color-accent-strong);
+    background: var(--color-accent-hover);
     transform: translateY(-1px);
     box-shadow: var(--shadow-float);
 }
@@ -811,7 +832,7 @@ button:disabled {
 
 .view-toggle button.active {
     background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
+    color: var(--color-accent-text);
     font-weight: 600;
     box-shadow: inset 0 0 0 1px var(--color-accent-soft);
 }
@@ -878,13 +899,13 @@ button:disabled {
 }
 
 #todayBtn {
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: #ffffff;
     border-color: var(--color-primary);
 }
 
 #todayBtn:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
     color: #ffffff;
 }
 
@@ -1063,7 +1084,7 @@ button:disabled {
 
 .daily-table th {
     background: var(--color-ink);
-    color: #f5f3f8;
+    color: var(--color-on-ink);
     font-weight: 600;
     text-transform: uppercase;
     font-size: 11px;
@@ -1320,7 +1341,7 @@ button:disabled {
 .estado-arrow {
     font-size: 9px;
     flex-shrink: 0;
-    color: #888;
+    color: var(--color-text-secondary);
 }
 
 .estado-filter-dropdown {
@@ -1527,7 +1548,7 @@ button:disabled {
 
 .daily-action-btn:hover {
     background: var(--color-ink);
-    color: #f5f3f8;
+    color: var(--color-on-ink);
 }
 
 .daily-action-btn--add {
@@ -1584,6 +1605,7 @@ button:disabled {
     border: 1px solid #ddd4eb;
     border-radius: var(--radius-input);
     background: var(--color-surface);
+    color: var(--color-text);
     font-size: 13px;
 }
 
@@ -1661,7 +1683,7 @@ button:disabled {
     height: 22px;
     cursor: pointer;
     background: transparent;
-    color: #9a8ab6;
+    color: var(--color-faint);
     font-size: 18px;
     line-height: 1;
     display: inline-flex;
@@ -2023,7 +2045,7 @@ button:disabled {
 }
 
 .btn-reply-send {
-    background: var(--color-primary) !important;
+    background: var(--color-accent) !important;
     color: #fff !important;
     border-radius: 4px;
     padding: 2px 10px !important;
@@ -2031,7 +2053,7 @@ button:disabled {
 }
 
 .btn-reply-send:hover {
-    background: var(--color-primary-hover) !important;
+    background: var(--color-accent-hover) !important;
 }
 
 .btn-reply-send-mail {
@@ -2185,6 +2207,7 @@ button:disabled {
     font-size: 13px;
     font-family: inherit;
     background: var(--color-input-bg);
+    color: var(--color-text);
     transition: border 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
 
@@ -2233,13 +2256,13 @@ button:disabled {
 }
 
 .btn-primary {
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: white;
     box-shadow: 0 4px 12px rgba(var(--color-primary-rgb), 0.35);
 }
 
 .btn-primary:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
     transform: translateY(-1px);
     box-shadow: 0 6px 16px rgba(var(--color-primary-rgb), 0.4);
 }
@@ -2705,13 +2728,13 @@ button:disabled {
 }
 
 .month-nav-btn--accent {
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: #ffffff;
     border-color: var(--color-primary);
 }
 
 .month-nav-btn--accent:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
     color: #ffffff;
 }
 
@@ -2782,7 +2805,10 @@ button:disabled {
 }
 
 .calendar-table thead th.month-header {
-    background: var(--color-primary);
+    background: var(--color-accent);
+    /* Was inheriting --color-ink from thead th, which is dark purple in light
+       mode and near-white in dark: both unreadable on the accent fill. */
+    color: #ffffff;
     font-size: 11px;
     font-weight: 700;
     padding: 10px;
@@ -2896,7 +2922,7 @@ button:disabled {
 }
 
 .zoom-btn:hover {
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: white;
     border-color: var(--color-primary);
 }
@@ -2966,7 +2992,7 @@ button:disabled {
     font-size: var(--day-font, 0px);
     font-weight: 500;
     padding: 3px 0;
-    color: #ffffff;
+    color: var(--color-on-ink);
     background: var(--color-ink);
 }
 
@@ -3224,7 +3250,7 @@ button:disabled {
 }
 
 .vacation-month-bar-wrap:hover .vacation-month-bar {
-    background: var(--color-primary);
+    background: var(--color-accent);
 }
 
 .vacation-month-bar-label {
@@ -3264,7 +3290,7 @@ button:disabled {
 }
 
 .capacity-week-nav button:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
     transform: scale(1.1);
 }
 
@@ -3479,7 +3505,7 @@ button:disabled {
 }
 
 .btn-save-status:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
 }
 
 .right-sidebar {
@@ -3557,7 +3583,7 @@ button:disabled {
     flex-shrink: 0;
     width: 24px;
     height: 24px;
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: white;
     border-radius: 50%;
     display: flex;
@@ -3631,7 +3657,7 @@ button:disabled {
 .btn-save-status {
     transition: background 140ms ease;
     width: 100%;
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: white;
     border: none;
     padding: 6px;
@@ -3771,7 +3797,7 @@ button:disabled {
 }
 
 .dash-pill.active {
-    background: var(--color-primary);
+    background: var(--color-accent);
     border-color: var(--color-primary);
     color: white;
 }
@@ -4395,7 +4421,7 @@ button:disabled {
     justify-content: center;
     width: 32px;
     height: 32px;
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: white;
     border-radius: 50%;
     font-size: 12px;
@@ -4552,20 +4578,52 @@ button:disabled {
     min-width: 250px;
 }
 
+/* Owner toggle. Unselected is an outlined chip, selected is filled.
+   The filled state uses --color-accent, not --color-primary: in dark
+   mode --color-primary is a light lavender and white text on it only
+   reaches ~2:1, while --color-accent stays dark enough in both themes. */
 .resp-popover-btn {
-    background: var(--color-primary);
-    color: white;
-    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--color-well);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
     padding: 8px 12px;
     border-radius: 6px;
     cursor: pointer;
     font-size: 12px;
     font-weight: 600;
-    transition: background 150ms ease;
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
 }
 
 .resp-popover-btn:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary);
+}
+
+.resp-popover-btn.is-selected {
+    background: var(--color-accent);
+    color: #ffffff;
+    border-color: var(--color-accent);
+}
+
+.resp-popover-btn.is-selected:hover {
+    background: var(--color-accent-hover);
+    border-color: var(--color-primary-hover);
+    color: #ffffff;
+}
+
+.resp-popover-check {
+    font-size: 11px;
+    line-height: 1;
+    opacity: 0.9;
+}
+
+.resp-popover-hint {
+    margin: 0;
+    font-size: 11px;
+    color: var(--color-text-secondary);
 }
 
 .resp-popover-close {
@@ -5035,13 +5093,13 @@ button:disabled {
     line-height: 1;
     font-size: 15px;
     cursor: pointer;
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: #fff;
     font-weight: 700;
 }
 
 .notes-add-btn:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
 }
 
 .project-note-editor {
@@ -5086,12 +5144,12 @@ button:disabled {
 }
 
 .btn-save-note {
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: #fff;
 }
 
 .btn-save-note:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
 }
 
 .btn-cancel-note {
@@ -5145,7 +5203,7 @@ button:disabled {
 .project-note-title {
     font-size: 12px;
     font-weight: 700;
-    color: var(--color-ink);
+    color: #2c2640;
 }
 
 .project-note-actions {
@@ -5160,7 +5218,9 @@ button:disabled {
     font-size: 10px;
     cursor: pointer;
     background: rgba(255, 255, 255, 0.7);
-    color: var(--color-ink);
+    /* The note cards keep their pastel background in dark mode, so their
+       controls stay dark ink (--color-ink flips to near-white). */
+    color: #2c2640;
 }
 
 .project-note-actions button:hover {
@@ -5252,7 +5312,7 @@ button:disabled {
 }
 
 .weekly-week-nav button {
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: white;
     border: none;
     width: 26px;
@@ -5268,7 +5328,7 @@ button:disabled {
 }
 
 .weekly-week-nav button:hover {
-    background: var(--color-primary-hover);
+    background: var(--color-accent-hover);
     transform: scale(1.1);
 }
 
@@ -5301,7 +5361,7 @@ button:disabled {
 }
 
 .widget-week-nav .widget-nav-btn:hover {
-    background: var(--color-primary);
+    background: var(--color-accent);
     border-color: var(--color-primary);
     color: #ffffff;
     transform: none;
@@ -5329,7 +5389,7 @@ button:disabled {
 
 .week-current-badge {
     font-size: 9px;
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: #fff;
     padding: 1px 6px;
     border-radius: var(--radius-input);
@@ -5467,7 +5527,7 @@ button:disabled {
 }
 
 .weekly-add-btn {
-    background: var(--color-primary);
+    background: var(--color-accent);
     color: #fff;
     border: none;
     border-radius: 7px;
@@ -5485,7 +5545,7 @@ button:disabled {
 }
 
 .weekly-add-btn:hover {
-    background: #5e1580;
+    background: var(--color-accent-hover);
 }
 
 /* ===== INCIDENTS WIDGET ===== */
@@ -5669,7 +5729,7 @@ button:disabled {
     border-left: 4px solid #b39cd6;
     border-radius: var(--radius-md);
     background: var(--color-ink);
-    color: #ffffff;
+    color: var(--color-on-ink);
     font-size: 13px;
     line-height: 1.4;
     box-shadow: 0 8px 24px rgba(14, 0, 40, 0.25);
@@ -5879,7 +5939,7 @@ button:disabled {
 
 .section-action-btn--accent {
     background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
+    color: var(--color-accent-text);
     border-color: transparent;
 }
 
@@ -5942,7 +6002,7 @@ button:disabled {
 .team-view-seg-btn.active,
 .daily-range-toggle button.active {
     background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
+    color: var(--color-accent-text);
     font-weight: 600;
 }
 
@@ -5985,13 +6045,13 @@ button:disabled {
 /* ----- Dashboard phase badge + pills accent ----- */
 .badge-fase {
     background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
+    color: var(--color-accent-text);
     border: 1px solid transparent;
 }
 
 .dash-pill.active {
     background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
+    color: var(--color-accent-text);
     border-color: var(--color-accent);
 }
 
@@ -6020,7 +6080,7 @@ button:disabled {
 
 .btn.btn-primary:hover,
 .btn-primary:hover {
-    background: var(--color-accent-strong);
+    background: var(--color-accent-hover);
 }
 
 .daily-cell.today-cell,
@@ -6030,7 +6090,7 @@ button:disabled {
 
 .holiday-badge {
     background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
+    color: var(--color-accent-text);
     border-radius: 4px;
     padding: 1px 5px;
     font-size: 9px;
@@ -6057,4 +6117,1225 @@ button:disabled {
     .ficha-bento > .widget-box {
         max-height: none;
     }
+}
+
+/* =====================================================
+   DARK MODE CONTRAST FIXES
+   =====================================================
+   This stylesheet was written light-first: dark mode was added
+   later as a token override on :root (see html[data-theme="dark"]
+   at the top). Any rule that hardcoded a colour instead of using a
+   token was left behind, so in dark mode you get two failure modes:
+
+     1. A hardcoded LIGHT surface (#fff, #fafafa, #f0f0f0...) keeps
+        its light background while the text on it comes from a token
+        that flipped to near-white  ->  white on white.
+     2. A hardcoded DARK ink (#333, #555, #666...) stays dark while
+        the surface under it comes from a token that flipped to dark
+        ->  black on black.
+
+   Everything below only remaps those orphaned values onto the
+   existing tokens, scoped to html[data-theme="dark"] so LIGHT MODE
+   IS LEFT UNCHANGED. No layout, spacing, radius, weight or size is
+   touched anywhere in this block - colour only.
+
+   If you add a new rule, use the tokens (--color-surface,
+   --color-well, --color-text, --color-text-secondary, ...) and you
+   will never need to add anything here.
+   ===================================================== */
+
+/* ---- Shell: the view title sat on a hardcoded white toolbar ---- */
+html[data-theme="dark"] .toolbar {
+    background: rgba(30, 24, 41, 0.9);
+}
+
+/* ---- Login screen: card was hardcoded white, title uses --color-ink ---- */
+html[data-theme="dark"] .login-card {
+    background: rgba(37, 29, 50, 0.95);
+}
+
+/* ---- Daily: filter dropdown, badges and day header buttons ---- */
+html[data-theme="dark"] .estado-filter-selectall span {
+    color: var(--color-text);
+}
+
+html[data-theme="dark"] .bau-incident-badge {
+    background: var(--color-attention-soft);
+}
+
+html[data-theme="dark"] .legend-swatch--weekend {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .day-header-task-btn.is-pending {
+    background: var(--color-positive-soft);
+    border-color: var(--color-positive);
+    color: var(--color-positive);
+}
+
+html[data-theme="dark"] .day-header-task-btn.is-done {
+    background: var(--color-accent-blue-soft);
+    border-color: var(--color-accent-blue);
+    color: var(--color-accent-blue);
+}
+
+/* ---- Day tasks modal ---- */
+html[data-theme="dark"] .day-personal-list {
+    border-color: var(--color-border);
+    background: var(--color-surface);
+}
+
+html[data-theme="dark"] .day-personal-item {
+    border-bottom-color: var(--color-hairline);
+}
+
+html[data-theme="dark"] .day-personal-item-main {
+    color: var(--color-text);
+}
+
+html[data-theme="dark"] .day-personal-delete:hover {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+}
+
+html[data-theme="dark"] .day-personal-add-row input {
+    border-color: var(--color-border);
+}
+
+html[data-theme="dark"] .day-personal-nav-btn:hover {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary);
+}
+
+/* ---- Comments and reply threads ---- */
+html[data-theme="dark"] .comment-entry.completed {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .comment-avatar {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+}
+
+html[data-theme="dark"] .comment-resp-chip,
+html[data-theme="dark"] .comment-action-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme="dark"] .comment-action-btn--danger:hover {
+    background: var(--color-negative-soft);
+}
+
+html[data-theme="dark"] .completion-badge--private {
+    background: var(--color-positive-soft);
+    color: var(--color-positive);
+}
+
+html[data-theme="dark"] .reply-textarea {
+    background: var(--color-input-bg);
+}
+
+html[data-theme="dark"] .reply-thread-line {
+    background: var(--color-primary-soft-hover);
+}
+
+/* ---- Team view: calendar and summary ---- */
+html[data-theme="dark"] .holiday-calendar-status--pending {
+    background: var(--color-attention-soft);
+    color: var(--color-attention);
+}
+
+html[data-theme="dark"] .calendar-table tbody td.weekend {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .calendar-table tbody td.weekend.vacation-willis-choice {
+    background: linear-gradient(135deg, var(--color-well) 0%, var(--color-well) 50%, var(--color-accent-blue) 50%, var(--color-accent-blue) 100%);
+}
+
+/* The weekend header is the dimmed sibling of th.day-header, which
+   sits on --color-ink. In dark mode ink is near-white, so the dim
+   tone has to be a faded --color-on-ink, not a light grey. */
+html[data-theme="dark"] .calendar-table thead th.weekend-header {
+    background: var(--color-ink);
+    color: rgba(36, 26, 56, 0.72);
+}
+
+html[data-theme="dark"] .calendar-table--compact thead th.day-header.weekend-header {
+    color: rgba(36, 26, 56, 0.72);
+}
+
+html[data-theme="dark"] .summary-table .vacation-current {
+    color: var(--color-accent-blue);
+}
+
+html[data-theme="dark"] .calendar-scroll-container::-webkit-scrollbar-track {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .calendar-scroll-container::-webkit-scrollbar-thumb {
+    background: var(--color-accent);
+}
+
+html[data-theme="dark"] .calendar-scroll-container::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent-hover);
+}
+
+/* ---- Project card: prerequisites and status history ---- */
+html[data-theme="dark"] .prereq-item-row:hover {
+    background: var(--color-primary-soft);
+}
+
+html[data-theme="dark"] .prereq-na-wrapper {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .status-history-item,
+html[data-theme="dark"] .right-sidebar .status-history-container {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .right-sidebar .status-history-container {
+    border-top-color: var(--color-hairline);
+}
+
+html[data-theme="dark"] .dst-user {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+}
+
+html[data-theme="dark"] .dst-text {
+    color: var(--color-text);
+}
+
+/* ---- Dashboard ---- */
+html[data-theme="dark"] .btn-clear-filters {
+    background: var(--color-well);
+    border-color: var(--color-border);
+    color: var(--color-text-secondary);
+}
+
+html[data-theme="dark"] .btn-clear-filters:hover {
+    background: var(--color-primary-soft);
+}
+
+html[data-theme="dark"] .dash-date-sep {
+    color: var(--color-faint);
+}
+
+html[data-theme="dark"] .dash-pill {
+    border-color: var(--color-border);
+    background: var(--color-well);
+    color: var(--color-text);
+}
+
+html[data-theme="dark"] .dashboard-table thead,
+html[data-theme="dark"] .capacity-table thead {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .dashboard-table th,
+html[data-theme="dark"] .capacity-table th,
+html[data-theme="dark"] .summary-label,
+html[data-theme="dark"] .summary-title,
+html[data-theme="dark"] .capacity-subtitle {
+    color: var(--color-text-secondary);
+}
+
+html[data-theme="dark"] .dashboard-table th {
+    border-bottom-color: var(--color-border);
+}
+
+html[data-theme="dark"] .dashboard-row:hover,
+html[data-theme="dark"] .capacity-table tbody tr:hover {
+    background: var(--color-primary-soft);
+}
+
+html[data-theme="dark"] .progress-bar-container {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .progress-bar-text {
+    color: var(--color-text);
+}
+
+html[data-theme="dark"] .dashboard-summary {
+    background: var(--color-surface);
+    border-color: var(--color-border);
+}
+
+html[data-theme="dark"] .overcapacity {
+    color: var(--color-negative);
+}
+
+/* The source rule uses !important, so the override has to as well. */
+html[data-theme="dark"] .sortable-header:hover {
+    background: var(--color-primary-soft-hover) !important;
+}
+
+/* ---- Weekly goals widget ---- */
+html[data-theme="dark"] .weekly-count-badge {
+    background: var(--color-primary-soft);
+}
+
+html[data-theme="dark"] .weekly-progress-bar {
+    background: var(--color-well);
+}
+
+html[data-theme="dark"] .weekly-task-item {
+    background: var(--color-well);
+    border-color: var(--color-border);
+}
+
+html[data-theme="dark"] .weekly-task-item:hover {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary-soft-hover);
+}
+
+html[data-theme="dark"] .weekly-task-text {
+    color: var(--color-text);
+}
+
+html[data-theme="dark"] .weekly-new-task-input {
+    color: var(--color-text);
+    background: var(--color-input-bg);
+}
+
+/* ---- Incidents widget ---- */
+html[data-theme="dark"] .incident-resolved {
+    background: var(--color-positive-soft);
+    border-color: var(--color-positive);
+}
+
+html[data-theme="dark"] .incident-text {
+    color: var(--color-text);
+}
+
+html[data-theme="dark"] .incident-check input[type="checkbox"] {
+    accent-color: var(--color-positive);
+}
+
+/* ---- Notes widget ----
+   The note cards keep their pastel sticky-note backgrounds in dark
+   mode on purpose, so everything written on them stays dark ink.
+   (.project-note-title is fixed in its base rule for the same
+   reason: it used --color-ink, which flips to near-white.) */
+html[data-theme="dark"] .btn-cancel-note {
+    background: var(--color-well);
+    color: var(--color-text);
+}
+
+html[data-theme="dark"] .btn-cancel-note:hover {
+    background: var(--color-primary-soft);
+}
+
+/* ---- Toasts: .toast sits on --color-ink so its text is
+   --color-on-ink, but .toast--error hardcodes a dark red surface
+   and therefore has to stay white in both themes. ---- */
+html[data-theme="dark"] .toast--error {
+    color: #ffffff;
+}
+
+/* =====================================================
+   OWNER / ASSIGNEE PICKER
+   Shared by the "New Project" modal (owners) and the day team
+   task form (assignees). Same visual language as the owner
+   popover in the project card, so the three read as one control.
+   Token-only, so it needs no dark-mode override.
+   ===================================================== */
+.owner-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.owner-picker-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--color-well);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    padding: 6px 10px;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.owner-picker-btn:hover {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary);
+}
+
+/* Filled state uses --color-accent rather than --color-primary:
+   in dark mode --color-primary is a light lavender and white text
+   on it only reaches ~2:1. */
+.owner-picker-btn.is-selected {
+    background: var(--color-accent);
+    color: #ffffff;
+    border-color: var(--color-accent);
+}
+
+.owner-picker-btn.is-selected:hover {
+    background: var(--color-accent-hover);
+    border-color: var(--color-primary-hover);
+    color: #ffffff;
+}
+
+.owner-picker-check {
+    font-size: 10px;
+    line-height: 1;
+    opacity: 0.9;
+}
+
+.owner-picker-hint {
+    margin: 0;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+}
+
+/* =====================================================
+   DAY TASKS MODAL
+   Two stacked sections: shared team tasks, then the private
+   personal ones. The list itself reuses .day-personal-list /
+   .day-personal-item so both sections look identical.
+   ===================================================== */
+.day-tasks-section {
+    margin-bottom: 18px;
+}
+
+.day-tasks-section:last-of-type {
+    margin-bottom: 8px;
+}
+
+.day-tasks-section-title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+
+.day-tasks-section-hint {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: var(--color-faint);
+}
+
+.day-task-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-input);
+    background: var(--color-well);
+}
+
+.day-task-form > input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-input);
+    background: var(--color-input-bg);
+    color: var(--color-text);
+    font-size: 13px;
+}
+
+.day-task-form > input[type="text"]:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+.day-task-form > select,
+.day-task-form-row > select {
+    padding: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-input);
+    background: var(--color-input-bg);
+    color: var(--color-text);
+    font-size: 12px;
+    max-width: 100%;
+}
+
+.day-task-form-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.day-task-form-label {
+    flex: 0 0 76px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+}
+
+.day-task-form .btn-primary {
+    align-self: flex-start;
+}
+
+/* ---- One team task in the list ---- */
+.day-task-item.is-mine {
+    /* Quiet marker for "this one is on me", so a long shared list
+       still reads at a glance. */
+    box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.day-task-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.day-task-text {
+    overflow-wrap: anywhere;
+}
+
+.day-task-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.day-task-chip {
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.day-task-chip.is-me {
+    background: var(--color-accent);
+    color: #ffffff;
+}
+
+.day-task-chip--none {
+    background: var(--color-neutral-soft);
+    color: var(--color-text-secondary);
+    font-weight: 600;
+}
+
+.day-task-project {
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--color-accent-soft);
+    color: var(--color-text);
+    font-size: 10px;
+    font-weight: 600;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.day-task-author {
+    font-size: 10px;
+    color: var(--color-faint);
+}
+
+/* The open-incident badge sits on --color-negative, which is a light coral
+   in dark mode: white on it is 2.8:1, so the badge takes dark ink instead. */
+html[data-theme="dark"] .incidents-open-badge {
+    color: var(--color-on-ink);
+}
+
+/* =====================================================
+   SIDEBAR: PROYECTO CON MENÚ "..."
+   El <li> es una rejilla de dos columnas (nombre | "..."), para que
+   el botón de menú no empuje ni recorte el nombre del proyecto.
+   Token-only, así que no necesita override de modo oscuro.
+   ===================================================== */
+.project-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 2px;
+}
+
+.project-item-select {
+    background: transparent;
+    border: none;
+    color: var(--color-muted);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 8px 10px;
+    width: 100%;
+    text-align: left;
+    border-radius: 6px;
+    transition: background 160ms ease, color 160ms ease;
+    overflow-wrap: anywhere;
+}
+
+.project-item-select:hover {
+    background: var(--color-well);
+    color: var(--color-ink);
+}
+
+.project-item-select.active {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    font-weight: 600;
+}
+
+/* Oculto hasta que el ratón entra en la fila, como el "..." de la
+   referencia, pero siempre alcanzable con el teclado. */
+.project-item-menu-btn {
+    background: transparent;
+    border: none;
+    color: var(--color-faint);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 4px 6px;
+    border-radius: 6px;
+    opacity: 0;
+    transition: opacity 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.project-item:hover .project-item-menu-btn,
+.project-item-menu-btn:focus-visible {
+    opacity: 1;
+}
+
+.project-item-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+
+.project-item-empty {
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--color-faint);
+}
+
+.sidebar-count {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    background: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+}
+
+.sidebar-count:empty {
+    display: none;
+}
+
+/* ---- El menú flotante ----
+   Vive en document.body: la lista del sidebar tiene overflow y un
+   menú anidado quedaría recortado. */
+.project-menu {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1200;
+    min-width: 190px;
+    padding: 6px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-input);
+    box-shadow: var(--shadow-pop);
+}
+
+.project-menu-title {
+    padding: 6px 10px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.project-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+    text-align: left;
+    color: var(--color-text);
+    transition: background 140ms ease, color 140ms ease;
+}
+
+.project-menu-item:hover {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+}
+
+.project-menu-item--danger:hover {
+    background: var(--color-negative-soft);
+    color: var(--color-negative);
+}
+
+.project-menu-ico {
+    width: 16px;
+    font-size: 12px;
+    text-align: center;
+    opacity: 0.8;
+}
+
+.project-menu-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--color-hairline);
+}
+
+/* =====================================================
+   FICHA: TÍTULO EDITABLE Y AVISO DE ESTADO
+   ===================================================== */
+
+/* Se comporta como la descripción: un input que parece texto hasta
+   que lo pulsas. Hereda el tamaño del .ficha-title que lo contiene. */
+.ficha-title-input {
+    font: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    letter-spacing: inherit;
+    color: var(--color-ink);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 1px 6px;
+    margin-left: -6px;
+    width: min(100%, 30ch);
+    transition: background 140ms ease, border-color 140ms ease;
+}
+
+.ficha-title-input:hover {
+    background: var(--color-well);
+    border-color: var(--color-border);
+}
+
+.ficha-title-input:focus {
+    outline: none;
+    background: var(--color-input-bg);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+.ficha-state-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius-input);
+    border-left: 3px solid var(--color-attention);
+    background: var(--color-attention-soft);
+    color: var(--color-text);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.ficha-state-banner--deleted {
+    border-left-color: var(--color-negative);
+    background: var(--color-negative-soft);
+}
+
+/* =====================================================
+   WIDGET DE CAPACIDAD SEMANAL (calculado)
+   ===================================================== */
+.capacity-widget-hint {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+}
+
+.capacity-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.capacity-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: 9px;
+}
+
+.capacity-row-body {
+    min-width: 0;
+}
+
+.capacity-row-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.capacity-bar {
+    flex: 1;
+    height: 8px;
+    min-width: 40px;
+    border-radius: var(--radius-pill);
+    background: var(--color-well);
+    overflow: hidden;
+}
+
+.capacity-bar-fill {
+    height: 100%;
+    border-radius: var(--radius-pill);
+    background: linear-gradient(90deg, var(--progress-grad-from), var(--progress-grad-to));
+    transition: width 220ms var(--ease-out);
+}
+
+.capacity-bar-fill.high-capacity {
+    background: linear-gradient(90deg, var(--color-attention), var(--color-priority-high));
+}
+
+.capacity-bar-fill.overcapacity {
+    background: linear-gradient(90deg, var(--color-priority-high), var(--color-negative));
+}
+
+.capacity-figure {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    flex: 0 0 auto;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 1px 5px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--color-text);
+    transition: background 140ms ease, border-color 140ms ease;
+}
+
+.capacity-figure:hover {
+    background: var(--color-well);
+    border-color: var(--color-border);
+}
+
+.capacity-figure.overcapacity strong {
+    color: var(--color-negative);
+}
+
+.capacity-figure.high-capacity strong {
+    color: var(--color-warning-text);
+}
+
+.capacity-figure-hours {
+    font-size: 10px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+
+.capacity-row-detail {
+    margin-top: 2px;
+    font-size: 10px;
+    color: var(--color-text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.capacity-row.is-overridden .capacity-row-detail {
+    color: var(--color-warning-text);
+    font-weight: 600;
+}
+
+.capacity-override-form {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.capacity-override-form input {
+    width: 72px;
+    padding: 5px 7px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-input-bg);
+    color: var(--color-text);
+    font-size: 12px;
+}
+
+.capacity-override-unit {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+}
+
+.capacity-override-save {
+    padding: 5px 10px;
+    font-size: 11px;
+    min-height: 0;
+}
+
+.capacity-total {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-hairline);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+
+.capacity-total strong {
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--color-text);
+}
+
+.capacity-total.overcapacity strong {
+    color: var(--color-negative);
+}
+
+.capacity-total.high-capacity strong {
+    color: var(--color-warning-text);
+}
+
+/* =====================================================
+   FORMULARIO DE TAREA: HORAS Y REPARTO
+   ===================================================== */
+.form-hint {
+    margin: 5px 0 0;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+}
+
+.form-label-optional {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-faint);
+}
+
+.form-group textarea.textarea-tall {
+    min-height: 96px;
+}
+
+.hours-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hours-row input {
+    width: 110px;
+    flex: 0 0 auto;
+}
+
+.hours-split {
+    margin-top: 8px;
+}
+
+.hours-split-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-input);
+    background: var(--color-well);
+}
+
+.hours-split-row {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.hours-split-user {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.hours-split-row input {
+    width: 100%;
+    padding: 5px 7px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-input-bg);
+    color: var(--color-text);
+    font-size: 12px;
+}
+
+.hours-split-unit {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+}
+
+.hours-split-summary {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+}
+
+/* =====================================================
+   PANEL DAILY COMMENTS COMO PANEL DE TAREAS
+   ===================================================== */
+.comment-owner-chips {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+
+.comment-hours-chip {
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-text);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.comment-desc-chip {
+    font-size: 11px;
+    color: var(--color-faint);
+}
+
+/* El titular de la tarea abre el detalle. Es un <button> para que
+   funcione con teclado, pero tiene que leerse como el texto que era. */
+.comment-text--clickable {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: 13px;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 140ms ease;
+}
+
+.comment-text--clickable:hover {
+    background: var(--color-primary-soft);
+}
+
+/* =====================================================
+   DETALLE AMPLIADO DE UNA TAREA
+   ===================================================== */
+.modal-task-detail {
+    max-width: 600px;
+}
+
+.task-detail-heading {
+    margin: 0 0 10px;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+}
+
+.task-detail-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--color-hairline);
+}
+
+.task-detail-date {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+}
+
+.task-detail-urgency {
+    padding: 1px 7px;
+    border-radius: var(--radius-pill);
+    background: var(--color-neutral-soft);
+    color: var(--color-text-secondary);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.task-detail-urgency.urgency-alta,
+.task-detail-urgency.urgency-máxima {
+    background: var(--color-urgency-soft);
+    color: var(--color-attention-text);
+}
+
+.task-detail-incident {
+    padding: 1px 7px;
+    border-radius: var(--radius-pill);
+    background: var(--color-negative-soft);
+    color: var(--color-negative-text);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.task-detail-block {
+    margin-top: 14px;
+}
+
+.task-detail-label {
+    margin-bottom: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+}
+
+.task-detail-value {
+    font-size: 13px;
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+}
+
+.task-detail-description {
+    padding: 10px 12px;
+    border-radius: var(--radius-input);
+    background: var(--color-well);
+    line-height: 1.5;
+}
+
+.task-detail-empty {
+    color: var(--color-text-secondary);
+}
+
+.task-detail-replies {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.task-detail-actions {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-hairline);
+}
+
+/* =====================================================
+   DASHBOARD: TABLA DE DEDICACIÓN
+   ===================================================== */
+.cap-toggle {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 2px 7px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--color-text);
+    transition: background 140ms ease, border-color 140ms ease;
+}
+
+.cap-toggle:hover {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary);
+}
+
+.cap-toggle.overcapacity {
+    color: var(--color-negative);
+}
+
+.cap-toggle.high-capacity {
+    color: var(--color-warning-text);
+}
+
+.cap-unit {
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.75;
+}
+
+.cap-manual {
+    margin-left: 3px;
+    padding: 0 3px;
+    border-radius: 3px;
+    background: var(--color-attention-soft);
+    color: var(--color-warning-text);
+    font-size: 8px;
+    font-weight: 700;
+}
+
+.cap-th-week {
+    display: block;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+
+.cap-total-row {
+    border-top: 2px solid var(--color-border);
+}
+
+.cap-total-row td {
+    padding-top: 10px;
+}
+
+.cap-total-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+
+.cap-total-row strong {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--color-text);
+}
+
+.cap-total-row .cap-total-pct {
+    display: block;
+    font-size: 10px;
+    color: var(--color-text-secondary);
+}
+
+.cap-total-row.overcapacity strong {
+    color: var(--color-negative);
+}
+
+.cap-total-row.high-capacity strong {
+    color: var(--color-warning-text);
 }

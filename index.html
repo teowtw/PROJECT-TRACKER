@@ -59,6 +59,18 @@
                     <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>Completed
                 </button>
                 <ul class="sidebar-list projects-list expanded" id="projectsListCompleted"></ul>
+
+                <button type="button" class="sidebar-title" id="sidebarTitleArchivados" aria-expanded="false" aria-controls="projectsListArchived" onclick="toggleSidebarSection('archivados')">
+                    <span class="section-toggle-icon" data-collapsed="true" aria-hidden="true"></span>Archived
+                    <span class="sidebar-count" id="sidebarCountArchived" aria-hidden="true"></span>
+                </button>
+                <ul class="sidebar-list projects-list collapsed" id="projectsListArchived"></ul>
+
+                <button type="button" class="sidebar-title" id="sidebarTitleEliminados" aria-expanded="false" aria-controls="projectsListDeleted" onclick="toggleSidebarSection('eliminados')">
+                    <span class="section-toggle-icon" data-collapsed="true" aria-hidden="true"></span>Bin
+                    <span class="sidebar-count" id="sidebarCountDeleted" aria-hidden="true"></span>
+                </button>
+                <ul class="sidebar-list projects-list collapsed" id="projectsListDeleted"></ul>
             </div>
 
             <!-- User Control -->
@@ -130,7 +142,7 @@
 
     <div class="modal" id="dailyModal" data-dirty-check>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dailyModalTitle">
-            <div class="modal-title" id="dailyModalTitle">New Daily Comment</div>
+            <div class="modal-title" id="dailyModalTitle">New Task</div>
             <div class="form-group">
                 <label for="commentProjectSelect">Project <span class="required-mark" aria-hidden="true">*</span></label>
                 <select id="commentProjectSelect" required>
@@ -138,10 +150,25 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="commentResponsible">Responsible</label>
-                <select id="commentResponsible">
+                <label id="commentResponsiblesLabel">Responsible</label>
+                <div id="commentResponsibles" class="owner-picker" role="group" aria-labelledby="commentResponsiblesLabel"></div>
+                <p class="form-hint" id="commentResponsiblesHint">Pick everyone working on this. Hours are split between them.</p>
+                <!-- Se conserva un select oculto con el primer responsable:
+                     applyPersonalTaskRuleFromUI y el histórico siguen usando
+                     la columna `responsible` de daily_comments. -->
+                <select id="commentResponsible" class="visually-hidden" tabindex="-1" aria-hidden="true">
                     <option value="">No responsible</option>
                 </select>
+            </div>
+            <div class="form-group">
+                <label for="commentHours">Estimated hours</label>
+                <div class="hours-row">
+                    <input type="number" id="commentHours" min="0" max="1000" step="0.5" placeholder="e.g.: 4"
+                           onchange="onDailyTaskHoursChange(this.value)">
+                    <button type="button" class="comment-action-btn" id="commentHoursSplitBtn"
+                            onclick="toggleDailyTaskHoursSplit()">Split per person</button>
+                </div>
+                <div id="commentHoursSplit" class="hours-split"></div>
             </div>
             <div class="form-group">
                 <label for="commentUrgency">Urgency</label>
@@ -164,8 +191,13 @@
                 </label>
             </div>
             <div class="form-group">
-                <label for="commentText">Comment <span class="required-mark" aria-hidden="true">*</span></label>
-                <textarea id="commentText" placeholder="Write your comment..." required></textarea>
+                <label for="commentText">Task <span class="required-mark" aria-hidden="true">*</span></label>
+                <textarea id="commentText" placeholder="What needs doing..." required></textarea>
+            </div>
+            <div class="form-group">
+                <label for="commentDescription">Description <span class="form-label-optional">optional</span></label>
+                <textarea id="commentDescription" class="textarea-tall"
+                          placeholder="Context, links, acceptance criteria, blockers..."></textarea>
             </div>
             <div class="modal-buttons">
                 <button type="button" class="btn btn-primary" onclick="saveDailyComment()">Save</button>
@@ -189,16 +221,53 @@
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dayPersonalTasksTitle">
             <div class="day-personal-modal-header">
                 <button type="button" class="btn btn-cancel day-personal-nav-btn" onclick="previousDayPersonalTasksDate()" aria-label="Previous working day">◀</button>
-                <div class="modal-title" id="dayPersonalTasksTitle">Personal Tasks for Today</div>
+                <div class="modal-title" id="dayPersonalTasksTitle">Tasks for Today</div>
                 <button type="button" class="btn btn-cancel day-personal-nav-btn" onclick="nextDayPersonalTasksDate()" aria-label="Next working day">▶</button>
             </div>
 
-            <div id="dayPersonalTasksList"></div>
+            <!-- Team tasks: shared with everyone, can be assigned to people -->
+            <div class="day-tasks-section">
+                <h3 class="day-tasks-section-title">
+                    Team tasks <span class="day-tasks-section-hint">visible to the whole team</span>
+                </h3>
 
-            <div class="day-personal-add-row">
-                <label class="visually-hidden" for="dayPersonalTaskInput">New personal task for today</label>
-                <input type="text" id="dayPersonalTaskInput" placeholder="New personal task..." onkeydown="if(event.key==='Enter') addDayPersonalTask()">
-                <button type="button" class="btn btn-primary" onclick="addDayPersonalTask()">Add</button>
+                <div id="dayTeamTasksList"></div>
+
+                <div class="day-task-form">
+                    <label class="visually-hidden" for="dayTeamTaskInput">New team task</label>
+                    <input type="text" id="dayTeamTaskInput"
+                           placeholder="e.g.: Move the Power Automate flow to UAT..."
+                           onkeydown="if(event.key==='Enter') addDayTeamTask()">
+
+                    <div class="day-task-form-row">
+                        <label class="day-task-form-label" for="dayTeamTaskProject">Project</label>
+                        <select id="dayTeamTaskProject" onchange="onDayTeamTaskProjectChange(this.value)">
+                            <option value="">No project</option>
+                        </select>
+                    </div>
+
+                    <div class="day-task-form-row">
+                        <span class="day-task-form-label" id="dayTeamTaskAssigneesLabel">Assigned to</span>
+                        <div id="dayTeamTaskAssignees" class="owner-picker" role="group" aria-labelledby="dayTeamTaskAssigneesLabel"></div>
+                    </div>
+
+                    <button type="button" class="btn btn-primary" onclick="addDayTeamTask()">Add team task</button>
+                </div>
+            </div>
+
+            <!-- Personal tasks: private to the logged-in user -->
+            <div class="day-tasks-section">
+                <h3 class="day-tasks-section-title">
+                    My personal tasks <span class="day-tasks-section-hint">only visible to you</span>
+                </h3>
+
+                <div id="dayPersonalTasksList"></div>
+
+                <div class="day-personal-add-row">
+                    <label class="visually-hidden" for="dayPersonalTaskInput">New personal task for today</label>
+                    <input type="text" id="dayPersonalTaskInput" placeholder="New personal task..." onkeydown="if(event.key==='Enter') addDayPersonalTask()">
+                    <button type="button" class="btn btn-primary" onclick="addDayPersonalTask()">Add</button>
+                </div>
             </div>
 
             <div class="modal-buttons">
@@ -239,6 +308,12 @@
             </div>
 
             <div class="form-group">
+                <label for="settingsWeeklyHours">Weekly hours</label>
+                <input type="number" id="settingsWeeklyHours" min="1" max="168" step="0.5" placeholder="40">
+                <p class="form-hint">Your contracted hours per week. This is the 100% mark in the capacity widgets.</p>
+            </div>
+
+            <div class="form-group">
                 <label for="settingsPassword">New Password</label>
                 <input type="password" id="settingsPassword" placeholder="Leave empty to keep current" autocomplete="new-password">
             </div>
@@ -264,6 +339,34 @@
         </div>
     </div>
 
+    <!-- Detalle de una tarea del panel Daily comments. data-backdrop-close:
+         un clic fuera solo cierra la ampliación, no completa la tarea. -->
+    <div class="modal" id="taskDetailModal" data-backdrop-close>
+        <div class="modal-content modal-task-detail" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="taskDetailTitle">
+            <div class="modal-title" id="taskDetailTitle">Task</div>
+            <div id="taskDetailBody"></div>
+            <div class="modal-buttons">
+                <button type="button" class="btn btn-primary" id="taskDetailEditBtn" onclick="editTaskFromDetail()">Edit</button>
+                <button type="button" class="btn btn-cancel" onclick="closeTaskDetailModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="renameProjectModal" data-dirty-check>
+        <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="renameProjectModalTitle">
+            <div class="modal-title" id="renameProjectModalTitle">Rename Project</div>
+            <div class="form-group">
+                <label for="renameProjectInput">Project Name <span class="required-mark" aria-hidden="true">*</span></label>
+                <input type="text" id="renameProjectInput" maxlength="120" placeholder="e.g.: Claims Automation..."
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();saveProjectRename();}">
+            </div>
+            <div class="modal-buttons">
+                <button type="button" class="btn btn-primary" onclick="saveProjectRename()">Save</button>
+                <button type="button" class="btn btn-cancel" onclick="closeRenameProjectModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="projectModal" data-dirty-check>
         <div class="modal-content modal-project" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="projectModalTitle">
             <div class="modal-title" id="projectModalTitle">Create New Project</div>
@@ -283,6 +386,10 @@
                 <label for="projectPhase">Project Phase</label>
                 <select id="projectPhase">
                 </select>
+            </div>
+            <div class="form-group">
+                <label id="projectOwnersLabel">Owners</label>
+                <div id="projectOwners" class="owner-picker" role="group" aria-labelledby="projectOwnersLabel"></div>
             </div>
             <div class="form-group">
                 <label for="projectStakeholders">Stakeholders</label>
