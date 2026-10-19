@@ -636,8 +636,14 @@ button:disabled {
 }
 
 .projects-list button.active {
-    background: var(--color-ink);
-    color: var(--color-on-ink);
+    /* Mismo tratamiento que .sidebar-list button.active: un realce
+       translúcido sobre el morado oscuro del sidebar. Antes usaba
+       var(--color-ink)/var(--color-on-ink), que dentro de .sidebar
+       se resuelven a blanco sólido + blanco (--color-ink se
+       redefine a #fff ahí para otros usos), dejando el proyecto
+       seleccionado como un bloque blanco sin texto visible. */
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
     font-weight: 600;
     box-shadow: var(--shadow-lift);
 }

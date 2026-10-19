@@ -5298,13 +5298,11 @@ function renderLastStatusWidget() {
             // Weekly Capacity sits to the right of Details (same row).
             html += renderCapacityWidget();
 
-            // Main sections (prerequisites + daily comments) as bento cards.
-            const showPrerequisites = Array.isArray(project.prerequisites) && project.prerequisites.length > 0;
-
-
-
-            // Prerequisites
-            if (showPrerequisites) {
+            // Prerequisites & Documentation: siempre se muestra, con los
+            // ítems estándar a false/N/A por defecto si el proyecto aún
+            // no tiene datos guardados (antes se ocultaba la sección
+            // entera cuando project.prerequisites estaba vacío o ausente).
+            {
 
                 html += `<section class="bento-card bento-card--prereq">
         <h3 class="bento-title">Prerequisites &amp; Documentation</h3>
