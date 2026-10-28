@@ -205,12 +205,21 @@ function normalizeUserDirectory(rawDirectory) {
         const row = source[key] || {};
         const initials = normalizeInitials(row.initials || key);
         if (!initials) return;
+        const pick = (camel, snake) => row[camel] !== undefined ? row[camel] : row[snake];
         normalized[initials] = {
             initials,
             email: normalizeEmail(row.email || getDefaultEmailByInitials(initials)),
             passwordHash: String(row.passwordHash || row.password_hash || ''),
-            weeklyHours: normalizeWeeklyHours(row.weeklyHours !== undefined ? row.weeklyHours : row.weekly_hours),
-            holidayRegion: normalizeHolidayRegion(row.holidayRegion !== undefined ? row.holidayRegion : row.holiday_region)
+            weeklyHours: normalizeWeeklyHours(pick('weeklyHours', 'weekly_hours')),
+            holidayRegion: normalizeHolidayRegion(pick('holidayRegion', 'holiday_region')),
+            // migrations_training_hours_admin.sql. Sin la columna (o en una
+            // caché local antigua) todo el mundo es activo y nadie es admin.
+            firstName: String(pick('firstName', 'first_name') || '').trim(),
+            lastName: String(pick('lastName', 'last_name') || '').trim(),
+            isAdmin: pick('isAdmin', 'is_admin') === true,
+            isActive: pick('isActive', 'is_active') !== false,
+            deactivatedAt: pick('deactivatedAt', 'deactivated_at') || null,
+            deactivatedBy: normalizeInitials(pick('deactivatedBy', 'deactivated_by') || '')
         };
     });
 
@@ -235,14 +244,20 @@ function loadUserDirectoryFromLocalStorage() {
     }
 }
 
+// teamMembers = personas ACTIVAS: es lo que alimenta todos los selectores
+// (owners, asignados, responsables), el calendario de Team y las filas de
+// capacidad. Alguien dado de baja sale de ahí, pero su trabajo sigue
+// guardado con sus iniciales y se ve en gris (ver isMemberActive).
 function refreshTeamMembersFromDirectory() {
-    const members = Object.keys(userDirectory).sort();
+    const members = Object.keys(userDirectory).filter(i => userDirectory[i].isActive !== false).sort();
     if (members.length === 0) return;
     teamMembers.splice(0, teamMembers.length, ...members);
 }
 
-async function loadUserDirectory() {
-    if (userDirectoryLoaded) return;
+// force: volver a leer de Supabase aunque ya se hubiera cargado (p. ej.
+// cuando otro admin da de alta o de baja a alguien, vía realtime).
+async function loadUserDirectory(force = false) {
+    if (userDirectoryLoaded && !force) return;
 
     const localDirectory = loadUserDirectoryFromLocalStorage();
     if (localDirectory && Object.keys(localDirectory).length > 0) {
@@ -261,13 +276,7 @@ async function loadUserDirectory() {
             data.forEach(row => {
                 const initials = normalizeInitials(row.initials);
                 if (!initials) return;
-                supabaseDirectory[initials] = {
-                    initials,
-                    email: normalizeEmail(row.email || getDefaultEmailByInitials(initials)),
-                    passwordHash: String(row.password_hash || ''),
-                    weeklyHours: normalizeWeeklyHours(row.weekly_hours),
-                    holidayRegion: normalizeHolidayRegion(row.holiday_region)
-                };
+                supabaseDirectory[initials] = row;
             });
             userDirectory = normalizeUserDirectory(supabaseDirectory);
             userDirectorySource = 'supabase';
@@ -314,21 +323,69 @@ function getUserEmailByInitials(initials) {
     return profile ? profile.email : '';
 }
 
+function isCurrentUserAdmin() {
+    const profile = getCurrentUserProfile();
+    return !!profile && profile.isAdmin && profile.isActive !== false;
+}
+
+// Iniciales que no están en el directorio (p. ej. las antiguas de
+// alguien que se cambió las iniciales) cuentan como no disponibles.
+function isMemberActive(initials) {
+    const profile = userDirectory[normalizeInitials(initials)];
+    return !!profile && profile.isActive !== false;
+}
+
+function getMemberFullName(initials) {
+    const profile = userDirectory[normalizeInitials(initials)];
+    if (!profile) return '';
+    return [profile.firstName, profile.lastName].filter(Boolean).join(' ');
+}
+
+// Atributos de un chip de persona: tooltip con el nombre y, si ya no está
+// disponible, data-unavailable para pintarlo en gris.
+function getMemberChipAttrs(initials) {
+    const name = getMemberFullName(initials);
+    if (isMemberActive(initials)) {
+        return name ? ` title="${escapeHtml(name)}"` : '';
+    }
+    return ` data-unavailable="true" title="${escapeHtml((name ? name + ' · ' : '') + 'No longer available')}"`;
+}
+
+// Fila de app_users a partir de un perfil del directorio. Se mandan
+// SIEMPRE todas las columnas: el upsert parcial que había hacía que
+// cambiar de iniciales perdiera la región, el nombre o el rol de admin.
+function buildAppUserRow(profile) {
+    return {
+        initials: profile.initials,
+        email: normalizeEmail(profile.email),
+        password_hash: String(profile.passwordHash || ''),
+        weekly_hours: normalizeWeeklyHours(profile.weeklyHours),
+        holiday_region: profile.holidayRegion || null,
+        first_name: profile.firstName || null,
+        last_name: profile.lastName || null,
+        is_admin: !!profile.isAdmin,
+        is_active: profile.isActive !== false,
+        deactivated_at: profile.deactivatedAt || null,
+        deactivated_by: profile.deactivatedBy || null
+    };
+}
+
 async function saveUserProfile(oldInitials, profile) {
     const oldKey = normalizeInitials(oldInitials);
     const newKey = normalizeInitials(profile && profile.initials);
     if (!newKey) throw new Error('Invalid initials');
 
+    const previous = userDirectory[oldKey] || userDirectory[newKey] || {};
     if (oldKey && oldKey !== newKey) {
         delete userDirectory[oldKey];
     }
 
-    userDirectory[newKey] = {
+    userDirectory[newKey] = Object.assign({}, previous, {
         initials: newKey,
         email: normalizeEmail(profile.email),
         passwordHash: String(profile.passwordHash || ''),
         weeklyHours: normalizeWeeklyHours(profile.weeklyHours)
-    };
+    });
 
     saveUserDirectoryToLocalStorage();
     refreshTeamMembersFromDirectory();
@@ -336,17 +393,17 @@ async function saveUserProfile(oldInitials, profile) {
     if (userDirectorySource === 'supabase') {
         const { error: upsertError } = await supabaseClient
             .from(APP_USERS_TABLE)
-            .upsert({
-                initials: newKey,
-                email: normalizeEmail(profile.email),
-                password_hash: String(profile.passwordHash || ''),
-                weekly_hours: normalizeWeeklyHours(profile.weeklyHours)
-            }, { onConflict: 'initials' });
+            .upsert(buildAppUserRow(userDirectory[newKey]), { onConflict: 'initials' });
 
         if (upsertError) {
             throw new Error(formatSupabaseError(upsertError, 'Could not save the user to Supabase'));
         }
 
+        // Cambio de iniciales: se borra la fila antigua de app_users
+        // (decisión de Teo, 28-oct-2026). Es el ÚNICO delete sobre app_users:
+        // dar de baja a alguien es is_active = false. Proyectos y tareas no
+        // se tocan y siguen con las iniciales antiguas, que la app muestra en
+        // gris como persona no disponible.
         if (oldKey && oldKey !== newKey) {
             await supabaseClient
                 .from(APP_USERS_TABLE)
@@ -354,6 +411,33 @@ async function saveUserProfile(oldInitials, profile) {
                 .eq('initials', oldKey);
         }
     }
+}
+
+// Cambios de un admin sobre otra persona (baja, reactivar, reset de
+// contraseña, rol). Siempre update, nunca delete: el historial se conserva.
+async function updateAppUser(initials, changes) {
+    const key = normalizeInitials(initials);
+    const profile = userDirectory[key];
+    if (!profile) throw new Error('User not found');
+    const next = Object.assign({}, profile, changes);
+    const row = buildAppUserRow(next);
+    delete row.initials;
+    const { error } = await supabaseClient.from(APP_USERS_TABLE).update(row).eq('initials', key);
+    if (error) throw new Error(formatSupabaseError(error, 'Could not update the user'));
+    userDirectory[key] = next;
+    saveUserDirectoryToLocalStorage();
+    refreshTeamMembersFromDirectory();
+}
+
+async function createAppUser(profile) {
+    const row = buildAppUserRow(profile);
+    // insert y no upsert: si las iniciales ya existen, que falle en vez de
+    // sobrescribir a otra persona.
+    const { error } = await supabaseClient.from(APP_USERS_TABLE).insert(row);
+    if (error) throw new Error(formatSupabaseError(error, 'Could not create the user'));
+    userDirectory[row.initials] = normalizeUserDirectory({ [row.initials]: row })[row.initials];
+    saveUserDirectoryToLocalStorage();
+    refreshTeamMembersFromDirectory();
 }
 
 // =====================================================
@@ -410,7 +494,8 @@ const MODAL_CLOSE_HANDLERS = {
     projectModal: () => closeProjectModal(),
     renameProjectModal: () => closeRenameProjectModal(),
     taskDetailModal: () => closeTaskDetailModal(),
-    taskEditorModal: () => closeTaskEditor()
+    taskEditorModal: () => closeTaskEditor(),
+    adminUserModal: () => closeAdminUserModal()
 };
 const modalOpenerStack = [];
 
@@ -483,6 +568,7 @@ function handleIndicatorKey(event, type) {
 let sidebarCollapsed = {
     activos: false,
     bau: false,
+    training: false,
     completados: false,
     // Archivados y papelera arrancan plegados: son secciones de consulta,
     // no de trabajo diario.
@@ -498,15 +584,63 @@ const LEGACY_PHASE_MAP = {
     'Mantenimiento': 'BAU'
 };
 
+function isTrainingProject(project) {
+    return !!project && project.phase === TRAINING_PHASE;
+}
+
 // Grupo de trabajo de un proyecto. El archivado se comprueba ANTES de la
 // fase: un proyecto archivado sale de Activos/BAU/Completados y pasa a su
 // propia sección, conserve la fase que conserve.
+// Training tiene grupo propio: no es portfolio (no cuenta en los KPIs del
+// dashboard) pero sus horas sí computan capacidad.
 function getProjectGroup(project) {
     if (isProjectArchived(project)) return 'archivados';
     const phase = project && project.phase;
+    if (phase === TRAINING_PHASE) return 'training';
     if (phase === 'Completed' || phase === 'Cancelled') return 'completados';
     if (phase === 'BAU') return 'bau';
     return 'activos';
+}
+
+// Tipo de tarea (daily_comments.task_type / day_tasks.task_type).
+// Training se pinta en verde en Daily y Tasks.
+const TASK_TYPE_STANDARD = 'standard';
+const TASK_TYPE_TRAINING = 'training';
+
+function normalizeTaskType(value) {
+    return value === TASK_TYPE_TRAINING ? TASK_TYPE_TRAINING : TASK_TYPE_STANDARD;
+}
+
+function isTrainingTask(task) {
+    return !!task && task.taskType === TASK_TYPE_TRAINING;
+}
+
+// Tipo por defecto de una tarea nueva según su proyecto: en un proyecto
+// Training, la tarea es de training salvo que se cambie a mano.
+function getDefaultTaskTypeForProject(projectId) {
+    const project = projectId ? projects.find(p => p.id === projectId) : null;
+    return isTrainingProject(project) ? TASK_TYPE_TRAINING : TASK_TYPE_STANDARD;
+}
+
+function renderTrainingBadge() {
+    return '<span class="training-badge">Training</span>';
+}
+
+// Savings en horas al año. Vacío = sin indicar (null), no 0: así el
+// dashboard distingue "no se ha calculado" de "no ahorra nada".
+function parseOptionalNonNegative(value) {
+    if (value === null || value === undefined || String(value).trim() === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function parseSavingsHours(value) {
+    return parseOptionalNonNegative(value);
+}
+
+function formatSavingsHours(value) {
+    const hours = parseSavingsHours(value);
+    return hours === null ? '-' : `${hours.toLocaleString('en-GB', { maximumFractionDigits: 1 })} h`;
 }
 
 // =====================================================
@@ -534,7 +668,8 @@ function getSearchTokens(query) {
 const SEARCH_SYNONYMS = {
     done: 'completed', finished: 'completed', closed: 'completed',
     maintenance: 'bau', hold: 'on hold', paused: 'on hold',
-    green: 'verde', amber: 'ambar', red: 'rojo'
+    green: 'verde', amber: 'ambar', red: 'rojo',
+    blocked: 'rojo', risk: 'ambar', cancelled: 'cancel'
 };
 
 function getProjectSearchHaystack(project) {
@@ -750,9 +885,11 @@ function getWeekDaysOff(user, weekKey) {
         const dateKey = formatDateKey(day);
         if (isHolidayForMember(initials, dateKey)) {
             result.holidays += 1;
-        } else if ((teamVacations || []).some(v =>
-            normalizeInitials(v.user_initials) === initials && dateKey >= v.start_date && dateKey <= v.end_date)) {
-            result.absences += 1;
+        } else {
+            // Un medio día (mañana o tarde) quita medio día de capacidad.
+            const absence = (teamVacations || []).find(v =>
+                normalizeInitials(v.user_initials) === initials && dateKey >= v.start_date && dateKey <= v.end_date);
+            if (absence) result.absences += isHalfDayLeave(absence) ? 0.5 : 1;
         }
     }
     return result;
@@ -900,17 +1037,31 @@ function syncPhaseSelectors() {
     if (select) select.innerHTML = renderPhaseOptions(PROJECT_PHASES[0]);
 }
 
+// Estados de un proyecto (projects.status). Valores guardados en español,
+// etiquetas en inglés. css = sufijo de las clases status-*, badge-*,
+// status-dot--* y dash-pill--* (los tres primeros se conservan como
+// estaban para no romper estilos). rank = orden de gravedad al ordenar
+// la tabla del dashboard. Ver migrations_training_hours_admin.sql (1b).
+const PROJECT_STATUSES = [
+    { value: 'Verde', label: 'On Track', css: 'verde', dot: 'verde', rank: 2 },
+    { value: 'Ámbar', label: 'At Risk', css: 'ámbar', dot: 'ambar', rank: 4 },
+    { value: 'Rojo', label: 'Blocked', css: 'rojo', dot: 'rojo', rank: 5 },
+    { value: 'En pausa', label: 'On Hold', css: 'pausa', dot: 'pausa', rank: 3 },
+    { value: 'Cancelado', label: 'Cancelled', css: 'cancelado', dot: 'cancelado', rank: 0 },
+    { value: 'Completado', label: 'Done', css: 'completado', dot: 'completado', rank: 1 }
+];
+
+function getStatusDef(status) {
+    return PROJECT_STATUSES.find(s => s.value === (status || 'Verde')) || PROJECT_STATUSES[0];
+}
+
+function getStatusCssKey(status) {
+    return getStatusDef(status).css;
+}
+
 function getStatusText(status) {
-    switch (status) {
-        case 'Verde':
-            return 'On Track';
-        case 'Ámbar':
-            return 'At Risk';
-        case 'Rojo':
-            return 'Blocked';
-        default:
-            return status || '-';
-    }
+    const def = PROJECT_STATUSES.find(s => s.value === status);
+    return def ? def.label : (status || '-');
 }
 
 // Priority/impact are stored in Spanish for data compatibility; display in English.
@@ -1169,6 +1320,30 @@ async function updateIndicator(event, projectId, field, value) {
             return ABSENCE_TYPES[vacation && vacation.absence_type] ? vacation.absence_type : 'vacation';
         }
 
+        // Medio día: team_vacations.day_portion = 'am' | 'pm' (ver
+        // migrations_half_day_leave.sql). Sin la columna, o 'full', es un
+        // día entero. days_count es integer en la BD, así que la duración
+        // real se calcula aquí y NUNCA se lee days_count directamente.
+        const DAY_PORTIONS = { full: 'Full day', am: 'Morning', pm: 'Afternoon' };
+
+        function getDayPortion(vacation) {
+            const portion = vacation && vacation.day_portion;
+            return portion === 'am' || portion === 'pm' ? portion : 'full';
+        }
+
+        function isHalfDayLeave(vacation) {
+            return getDayPortion(vacation) !== 'full';
+        }
+
+        function getLeaveDays(vacation) {
+            if (isHalfDayLeave(vacation)) return 0.5;
+            return Number(vacation && vacation.days_count) || 0;
+        }
+
+        function formatLeaveDays(days) {
+            return days.toLocaleString('en-GB', { maximumFractionDigits: 1 });
+        }
+
         function isVacationAbsence(vacation) {
             return getAbsenceType(vacation) === 'vacation' && vacation.vacation_type !== 'not_charged';
         }
@@ -1195,6 +1370,14 @@ async function updateIndicator(event, projectId, field, value) {
 
         function isExcludedResponsible(value) {
             return excludedResponsibles.includes((value || '').trim().toUpperCase());
+        }
+
+        // Opciones de un selector de personas: los activos y, al final, los
+        // que ya estaban elegidos pero ya no están disponibles, para que se
+        // vean (en gris) y se puedan quitar. Nunca se ofrecen para añadir.
+        function withSelectedUnavailable(activeOptions, selected) {
+            const extra = (selected || []).filter(m => !activeOptions.includes(m) && !isExcludedResponsible(m));
+            return activeOptions.concat(extra);
         }
 
         function sanitizeResponsiblesList(value) {
@@ -1262,6 +1445,7 @@ async function updateIndicator(event, projectId, field, value) {
 
         let dailyViewMode = 'activos';
         let dailyBauGroupCollapsed = false;
+        let dailyTrainingGroupCollapsed = false;
         let dashboardFilters = {
     proyecto: '',
     fases: [],
@@ -1350,7 +1534,10 @@ function setDashboardFilter(field, value) {
 // =====================================================
 
         function setDailyViewMode(mode) {
-            dailyViewMode = mode;
+            // Los proyectos Training no tienen pestaña: se ven en un grupo
+            // propio dentro de Active, para que todo el equipo los vea.
+            dailyViewMode = mode === 'training' ? 'activos' : mode;
+            if (mode === 'training') dailyTrainingGroupCollapsed = false;
             [['btnDailyActivos', 'activos'], ['btnDailyBau', 'bau'], ['btnDailyCompletados', 'completados']].forEach(([id, value]) => {
                 const btn = document.getElementById(id);
                 if (!btn) return;
@@ -1464,7 +1651,34 @@ function setDashboardFilter(field, value) {
             const creator = normalizeInitials(currentUser || '');
             newProjectOwners = (creator && teamMembers.includes(creator)) ? [creator] : [];
             renderNewProjectOwners();
+            onNewProjectPhaseChange();
             openModal('projectModal', '#projectName');
+        }
+
+        // Training: se ocultan los campos de negocio (savings, país,
+        // stakeholders) y, si el nombre está vacío, se propone
+        // "<Nombre>'s Training".
+        function onNewProjectPhaseChange() {
+            const phaseInput = document.getElementById('projectPhase');
+            const isTraining = !!phaseInput && phaseInput.value === TRAINING_PHASE;
+            document.querySelectorAll('#projectModal [data-not-training]').forEach(el => { el.hidden = isTraining; });
+            const hint = document.getElementById('projectPhaseTrainingHint');
+            if (hint) hint.hidden = !isTraining;
+
+            const nameInput = document.getElementById('projectName');
+            if (!nameInput) return;
+            if (isTraining && !nameInput.value.trim()) {
+                nameInput.value = getDefaultTrainingProjectName();
+            } else if (!isTraining && nameInput.value === getDefaultTrainingProjectName()) {
+                // Se había propuesto al elegir Training y se ha vuelto atrás.
+                nameInput.value = '';
+            }
+        }
+
+        function getDefaultTrainingProjectName() {
+            const profile = getCurrentUserProfile();
+            const firstName = profile && profile.firstName ? profile.firstName : normalizeInitials(currentUser || '');
+            return firstName ? `${firstName}'s Training` : 'Training';
         }
 
         function renderNewProjectOwners() {
@@ -1502,7 +1716,7 @@ function setDashboardFilter(field, value) {
             // Limpiar campos de forma SEGURA (solo si existen)
             // projectCountry se añadió a la lista: antes se quedaba con el
             // valor del proyecto anterior al crear dos seguidos.
-            const fields = ['projectName', 'projectStartDate', 'projectEndDate', 'volume', 'fte', 'projectStakeholders', 'projectCountry', 'projectPhase'];
+            const fields = ['projectName', 'projectStartDate', 'projectEndDate', 'savingsHours', 'fte', 'projectStakeholders', 'projectCountry', 'projectPhase'];
             fields.forEach(id => {
                 const input = document.getElementById(id);
                 if (input) {
@@ -1513,6 +1727,7 @@ function setDashboardFilter(field, value) {
                     }
                 }
             });
+            onNewProjectPhaseChange();
 
             newProjectOwners = [];
             renderNewProjectOwners();
@@ -1648,7 +1863,7 @@ function setDashboardFilter(field, value) {
                         ${options.concat(orphans).map(resp => {
                             const on = current.includes(resp);
                             return `<button type="button"
-                                    class="resp-popover-btn${on ? ' is-selected' : ''}"
+                                    class="resp-popover-btn${on ? ' is-selected' : ''}"${options.includes(resp) ? '' : ' data-unavailable="true"'}
                                     data-responsible="${escapeHtml(resp)}"
                                     aria-pressed="${on}"
                                     title="${on ? 'Remove' : 'Add'} ${escapeHtml(resp)}"
@@ -1767,7 +1982,7 @@ function setDashboardFilter(field, value) {
             const nameInput = document.getElementById('projectName');
             const startDateInput = document.getElementById('projectStartDate');
             const endDateInput = document.getElementById('projectEndDate');
-            const volumeInput = document.getElementById('volume');
+            const savingsHoursInput = document.getElementById('savingsHours');
             const fteInput = document.getElementById('fte');
             const phaseInput = document.getElementById('projectPhase');
             const stakeholdersInput = document.getElementById('projectStakeholders');
@@ -1784,11 +1999,14 @@ function setDashboardFilter(field, value) {
             // LEER VALORES
             const startDate = startDateInput.value || null;
             const endDate = endDateInput.value || null;
-            const volume = parseFloat(volumeInput.value) || 0;
-            const fte = parseFloat(fteInput.value) || 0;
             const phase = phaseInput.value;
-            const stakeholders = stakeholdersInput.value.trim();
-            const country = countryInput ? countryInput.value.trim() : '';
+            // En un proyecto Training los campos de negocio están ocultos:
+            // no se guarda lo que hubiera quedado escrito en ellos.
+            const isTraining = phase === TRAINING_PHASE;
+            const savingsHours = isTraining ? null : parseSavingsHours(savingsHoursInput.value);
+            const fte = isTraining ? 0 : (parseFloat(fteInput.value) || 0);
+            const stakeholders = isTraining ? '' : stakeholdersInput.value.trim();
+            const country = (countryInput && !isTraining) ? countryInput.value.trim() : '';
 
             // PRERREQUISITOS ESTÁNDAR
             const prerequisites = (typeof STANDARD_PREREQUISITES !== 'undefined' ? STANDARD_PREREQUISITES : []).map(pName => ({
@@ -1805,7 +2023,7 @@ function setDashboardFilter(field, value) {
                 name: name,
                 start_date: startDate,
                 end_date: endDate,
-                volume: volume,
+                savings_hours: savingsHours,
                 fte: fte,
                 phase: phase,
                 stakeholders: stakeholders,
@@ -1838,7 +2056,7 @@ function setDashboardFilter(field, value) {
             nameInput.value = '';
             startDateInput.value = '';
             endDateInput.value = '';
-            volumeInput.value = '';
+            savingsHoursInput.value = '';
             fteInput.value = '';
             stakeholdersInput.value = '';
             if (countryInput) countryInput.value = '';
@@ -1877,6 +2095,7 @@ function setDashboardFilter(field, value) {
             const lists = {
                 activos: document.getElementById('projectsListActive'),
                 bau: document.getElementById('projectsListBau'),
+                training: document.getElementById('projectsListTraining'),
                 completados: document.getElementById('projectsListCompleted'),
                 archivados: document.getElementById('projectsListArchived'),
                 eliminados: document.getElementById('projectsListDeleted')
@@ -1893,7 +2112,7 @@ function setDashboardFilter(field, value) {
             const matches = project => !searching || projectMatchesQuery(project, sidebarSearchQuery);
             const visibleLive = projects.filter(matches);
             const visibleDeleted = deletedProjects.filter(matches);
-            const matchCountByGroup = { activos: 0, bau: 0, completados: 0, archivados: 0, eliminados: visibleDeleted.length };
+            const matchCountByGroup = { activos: 0, bau: 0, training: 0, completados: 0, archivados: 0, eliminados: visibleDeleted.length };
             visibleLive.forEach(p => { matchCountByGroup[getProjectGroup(p)] += 1; });
 
             Object.entries(lists).forEach(([group, list]) => {
@@ -2246,7 +2465,7 @@ function setDashboardFilter(field, value) {
             showToast('Project permanently deleted', 'success');
         }
 
-        const SIDEBAR_TITLE_IDS = { activos: 'sidebarTitleActivos', bau: 'sidebarTitleBau', completados: 'sidebarTitleCompletados', archivados: 'sidebarTitleArchivados', eliminados: 'sidebarTitleEliminados' };
+        const SIDEBAR_TITLE_IDS = { activos: 'sidebarTitleActivos', bau: 'sidebarTitleBau', training: 'sidebarTitleTraining', completados: 'sidebarTitleCompletados', archivados: 'sidebarTitleArchivados', eliminados: 'sidebarTitleEliminados' };
 
         // Texto del buscador del sidebar. El <input> es HTML estático (no se
         // re-renderiza), así que el tiempo real no le roba el foco.
@@ -2695,6 +2914,8 @@ function setDashboardFilter(field, value) {
                 effort: ['Bajo', 'Medio', 'Alto'].includes(t.effort) ? t.effort : '',
                 time: /^\d{2}:\d{2}$/.test(t.task_time || '') ? t.task_time : '',
                 visibility: t.visibility === 'private' ? 'private' : 'team',
+                // migrations_training_hours_admin.sql
+                taskType: normalizeTaskType(t.task_type),
                 createdBy: normalizeInitials(t.created_by || ''),
                 completed: !!t.completed,
                 createdAt: t.created_at,
@@ -2737,10 +2958,24 @@ function setDashboardFilter(field, value) {
                 ? currentProjectId
                 : '';
             if (projectSelect) projectSelect.value = dayTeamTaskProjectId;
+            syncTrainingCheckbox('dayTeamTaskTraining', dayTeamTaskProjectId);
         }
 
         function onDayTeamTaskProjectChange(value) {
             dayTeamTaskProjectId = value || '';
+            syncTrainingCheckbox('dayTeamTaskTraining', dayTeamTaskProjectId);
+        }
+
+        // Al elegir proyecto, la casilla Training se marca si el proyecto es
+        // Training. Después se puede cambiar a mano.
+        function syncTrainingCheckbox(checkboxId, projectId) {
+            const box = document.getElementById(checkboxId);
+            if (box) box.checked = getDefaultTaskTypeForProject(projectId) === TASK_TYPE_TRAINING;
+        }
+
+        function readTaskTypeFromCheckbox(checkboxId) {
+            const box = document.getElementById(checkboxId);
+            return box && box.checked ? TASK_TYPE_TRAINING : TASK_TYPE_STANDARD;
         }
 
         function renderDayTeamTaskAssignees() {
@@ -2817,7 +3052,7 @@ function setDashboardFilter(field, value) {
                 const mine = task.assignees.includes(me);
 
                 const assigneeChips = task.assignees.length
-                    ? task.assignees.map(a => `<span class="day-task-chip${a === me ? ' is-me' : ''}">${escapeHtml(a)}</span>`).join('')
+                    ? task.assignees.map(a => `<span class="day-task-chip${a === me ? ' is-me' : ''}"${getMemberChipAttrs(a)}>${escapeHtml(a)}</span>`).join('')
                     : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
 
                 const projectChip = project
@@ -2825,12 +3060,12 @@ function setDashboardFilter(field, value) {
                     : '';
 
                 html += `
-                <div class="day-personal-item day-task-item prio-edge-${getPriorityLevel(task.priority)}${task.completed ? ' done' : ''}${mine ? ' is-mine' : ''}">
+                <div class="day-personal-item day-task-item prio-edge-${getPriorityLevel(task.priority)}${task.completed ? ' done' : ''}${mine ? ' is-mine' : ''}${isTrainingTask(task) ? ' is-training' : ''}">
                     <label class="day-personal-item-main">
                         <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleDayTeamTask(${jsArg(task.id)}, this.checked)">
                         <span class="day-task-body">
                             <span class="day-task-text">${task.time ? `<span class="day-task-time">${escapeHtml(task.time)}</span> ` : ''}${escapeHtml(task.text)}</span>
-                            <span class="day-task-meta">${renderPriorityBadge(getPriorityLevel(task.priority), getPriorityLabel(task.priority))}${task.visibility === 'private' ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : ''}${projectChip}${assigneeChips}${task.createdBy ? `<span class="day-task-author">by ${escapeHtml(task.createdBy)}</span>` : ''}</span>
+                            <span class="day-task-meta">${isTrainingTask(task) ? renderTrainingBadge() : ''}${renderPriorityBadge(getPriorityLevel(task.priority), getPriorityLabel(task.priority))}${task.visibility === 'private' ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : ''}${projectChip}${assigneeChips}${task.createdBy ? `<span class="day-task-author">by ${escapeHtml(task.createdBy)}</span>` : ''}</span>
                         </span>
                     </label>
                     <button type="button" class="day-personal-delete" onclick="deleteDayTeamTask(${jsArg(task.id)})" title="Delete task" aria-label="Delete team task: ${escapeHtml(task.text)}">×</button>
@@ -2861,6 +3096,7 @@ function setDashboardFilter(field, value) {
                     text,
                     project_id: projectId,
                     assignees: sanitizeResponsiblesList(dayTeamTaskAssignees),
+                    task_type: readTaskTypeFromCheckbox('dayTeamTaskTraining'),
                     created_by: normalizeInitials(currentUser || 'US'),
                     completed: false
                 });
@@ -2946,6 +3182,7 @@ function setDashboardFilter(field, value) {
                 totalHours: getTaskTotalHours(task),
                 assignees: getTaskAssignees(task),
                 completed: !!task.completed,
+                taskType: normalizeTaskType(task.taskType),
                 isPrivate: isComment ? !!task.isPersonal : task.visibility === 'private',
                 canEdit: isComment ? canCurrentUserManageComment(task) : isDayTaskInvolvingMe(task)
             };
@@ -3012,7 +3249,7 @@ function setDashboardFilter(field, value) {
                 ? `openTaskDetail(${jsArg(item.id)})`
                 : (item.canEdit ? `openTaskEditor(${jsArg(item.id)})` : '');
 
-            return `<li class="my-task prio-edge-${item.level}${item.completed ? ' done' : ''}">
+            return `<li class="my-task prio-edge-${item.level}${item.completed ? ' done' : ''}${isTrainingTask(item) ? ' is-training' : ''}">
                 <input type="checkbox" class="my-task-check" ${item.completed ? 'checked' : ''}
                        aria-label="Mark “${escapeHtml(item.title)}” as done"
                        ${item.canEdit ? '' : 'disabled'}
@@ -3023,12 +3260,13 @@ function setDashboardFilter(field, value) {
                         : `<span class="my-task-title">${escapeHtml(item.title)}</span>`}
                     ${item.description ? `<p class="my-task-desc">${escapeHtml(item.description)}</p>` : ''}
                     <div class="my-task-meta">
+                        ${isTrainingTask(item) ? renderTrainingBadge() : ''}
                         ${renderPriorityBadge(item.level, item.levelLabel)}
                         ${effortLabel ? `<span class="my-task-chip" title="Effort">Effort: ${escapeHtml(effortLabel)}</span>` : ''}
                         ${project ? `<span class="day-task-project">${escapeHtml(project.name)}</span>` : '<span class="my-task-chip my-task-chip--muted">No project</span>'}
                         ${when ? `<span class="my-task-chip">${when}</span>` : ''}
                         ${hours ? `<span class="my-task-chip" title="Your share of the estimated hours">${hours}</span>` : ''}
-                        ${others.map(a => `<span class="day-task-chip">${escapeHtml(a)}</span>`).join('')}
+                        ${others.map(a => `<span class="day-task-chip"${getMemberChipAttrs(a)}>${escapeHtml(a)}</span>`).join('')}
                         ${item.isPrivate ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : ''}
                         ${item.source === 'comment' ? '<span class="my-task-source" title="Created from Daily">Daily</span>' : ''}
                     </div>
@@ -3152,9 +3390,9 @@ function setDashboardFilter(field, value) {
             const host = document.getElementById('taskEditorAssignees');
             if (!host) return;
             const me = normalizeInitials(currentUser || '');
-            host.innerHTML = teamMembers.filter(m => !isExcludedResponsible(m)).map(member => {
+            host.innerHTML = withSelectedUnavailable(teamMembers.filter(m => !isExcludedResponsible(m)), taskEditorState.assignees).map(member => {
                 const on = taskEditorState.assignees.includes(member);
-                return `<button type="button" class="owner-picker-btn${on ? ' is-selected' : ''}" aria-pressed="${on}"
+                return `<button type="button" class="owner-picker-btn${on ? ' is-selected' : ''}" aria-pressed="${on}"${isMemberActive(member) ? '' : ' data-unavailable="true"'}
                         title="${on ? 'Remove' : 'Add'} ${escapeHtml(member)}${member === me ? ' (you)' : ''}"
                         onclick="toggleTaskEditorAssignee(${jsArg(member)})">
                         <span class="owner-picker-check" aria-hidden="true">${on ? '✓' : '+'}</span>${escapeHtml(member)}
@@ -3209,6 +3447,11 @@ function setDashboardFilter(field, value) {
             document.getElementById('taskEditorTime').value = task ? (task.time || '') : '';
             const visibility = task ? task.visibility : 'private';
             document.querySelectorAll('input[name="taskEditorVisibility"]').forEach(r => { r.checked = r.value === visibility; });
+            if (task) {
+                document.getElementById('taskEditorTraining').checked = isTrainingTask(task);
+            } else {
+                syncTrainingCheckbox('taskEditorTraining', projectSelect.value);
+            }
 
             renderTaskEditorAssignees();
             onTaskEditorDateChange();
@@ -3253,6 +3496,7 @@ function setDashboardFilter(field, value) {
                 task_date: date,
                 task_time: time,
                 visibility: date && checkedVisibility ? checkedVisibility.value : 'private',
+                task_type: readTaskTypeFromCheckbox('taskEditorTraining'),
                 updated_at: new Date().toISOString()
             };
 
@@ -3337,6 +3581,12 @@ function setDashboardFilter(field, value) {
                 weekDates.some(date => getVisibleCommentsByProjectDate(p.id, formatDateKey(date)).length > 0);
             const bauActivityProjects = dailyViewMode === 'activos'
                 ? applyDailyFilters(bauProjects.filter(bauHasActivity))
+                : [];
+
+            // En Activos, todos los proyectos Training en su propio grupo:
+            // así el equipo ve de un vistazo quién está en formación.
+            const trainingProjects = dailyViewMode === 'activos'
+                ? applyDailyFilters(projects.filter(p => getProjectGroup(p) === 'training'))
                 : [];
 
             const bauTabButton = document.getElementById('btnDailyBau');
@@ -3463,13 +3713,14 @@ function setDashboardFilter(field, value) {
 
             weekDates.forEach(date => {
                 const dateKey = formatDateKey(date);
-                const usersOnVacation = teamVacations
+                const dayAbsences = teamVacations
                     .filter(v => dateKey >= v.start_date && dateKey <= v.end_date)
-                    .map(v => v.user_initials)
-                    .filter((value, index, self) => self.indexOf(value) === index);
+                    .filter((v, index, self) => self.findIndex(o => o.user_initials === v.user_initials) === index);
 
-                const vacationBadges = usersOnVacation.map(user =>
-                    `<span class="vacation-badge">${user}</span>`
+                // Medio día: "½" junto a las iniciales y el detalle en el tooltip.
+                const vacationBadges = dayAbsences.map(v => isHalfDayLeave(v)
+                    ? `<span class="vacation-badge vacation-badge--half" title="${escapeHtml(v.user_initials)}: ${DAY_PORTIONS[getDayPortion(v)].toLowerCase()} off">${escapeHtml(v.user_initials)}½</span>`
+                    : `<span class="vacation-badge">${escapeHtml(v.user_initials)}</span>`
                 ).join('');
 
                 html += `<th class="vacation-badges-cell">${vacationBadges}</th>`;
@@ -3479,7 +3730,7 @@ function setDashboardFilter(field, value) {
             html += `</thead><tbody>`;
 
             const appendProjectRow = (project) => {
-                    const selectedClass = project.id === currentProjectId ? 'selected-row' : '';
+                    const selectedClass = (project.id === currentProjectId ? 'selected-row' : '') + (isTrainingProject(project) ? ' training-row' : '');
                     const openIncidents = getProjectGroup(project) === 'bau' ? countOpenIncidents(project.id) : 0;
                     const incidentBadge = openIncidents
                         ? ` <span class="bau-incident-badge" title="${openIncidents} open incident(s)">${openIncidents}</span>`
@@ -3508,8 +3759,13 @@ function setDashboardFilter(field, value) {
                         const hasPersonalPending = pendingPersonal > 0;
                         const isHoliday = isHolidayForAnyTeamMember(dateKey);
                         const isToday = dateKey === todayKey;
+                        // Training gana a los demás resaltados: es lo que el
+                        // equipo tiene que reconocer de un vistazo.
+                        const hasTraining = topLevelComments.some(isTrainingTask);
                         let highlightClass = '';
-                        if (hasTeamPending && hasPersonalPending) {
+                        if (hasTraining) {
+                            highlightClass = ' has-training';
+                        } else if (hasTeamPending && hasPersonalPending) {
                             highlightClass = ' has-comment-mixed';
                         } else if (hasTeamPending) {
                             highlightClass = ' has-comment';
@@ -3528,7 +3784,7 @@ function setDashboardFilter(field, value) {
                             const shortText = latest.text.length > 60 ? latest.text.slice(0, 60) + '…' : latest.text;
                             previewText = escapeHtml(shortText.replace(/\n/g, ' '));
                             const threadBadge = threadsWithReplies > 0 ? ` · <span class="cell-thread-badge">${threadsWithReplies}</span>` : '';
-                            metaText = `${topLevelComments.length} comment(s) · ${escapeHtml(getUrgencyLabel(latest.urgency))}${latest.hasIncident ? ' · INCIDENT' : ''}${threadBadge}`;
+                            metaText = `${hasTraining ? renderTrainingBadge() + ' ' : ''}${topLevelComments.length} comment(s) · ${escapeHtml(getUrgencyLabel(latest.urgency))}${latest.hasIncident ? ' · INCIDENT' : ''}${threadBadge}`;
                         }
 
                         html += `<td class="${cellClass}">
@@ -3567,6 +3823,19 @@ function setDashboardFilter(field, value) {
                      </tr>`;
                 if (!dailyBauGroupCollapsed) {
                     sortDailyProjects(bauActivityProjects).forEach(appendProjectRow);
+                }
+            }
+
+            if (trainingProjects.length) {
+                html += `<tr class="daily-group-row daily-group-row--training">
+                        <td colspan="${dailyColspan}">
+                            <button type="button" class="daily-group-toggle" aria-expanded="${!dailyTrainingGroupCollapsed}" onclick="toggleDailyTrainingGroup()">
+                                <span class="section-toggle-icon" data-collapsed="${dailyTrainingGroupCollapsed}" aria-hidden="true"></span>Training (${trainingProjects.length})
+                            </button>
+                        </td>
+                     </tr>`;
+                if (!dailyTrainingGroupCollapsed) {
+                    sortDailyProjects(trainingProjects).forEach(appendProjectRow);
                 }
             }
 
@@ -3693,6 +3962,11 @@ function setDashboardFilter(field, value) {
             renderDaily();
         }
 
+        function toggleDailyTrainingGroup() {
+            dailyTrainingGroupCollapsed = !dailyTrainingGroupCollapsed;
+            renderDaily();
+        }
+
 
 
 
@@ -3725,7 +3999,9 @@ function setDashboardFilter(field, value) {
             if (!host) return;
 
             const isPersonal = !!(document.getElementById('commentPersonal') || {}).checked;
-            const options = teamMembers.filter(m => !isExcludedResponsible(m));
+            // Activos + los ya elegidos que ya no lo están (en gris): se
+            // pueden quitar, pero no añadir.
+            const options = withSelectedUnavailable(teamMembers.filter(m => !isExcludedResponsible(m)), dailyTaskResponsibles);
 
             if (!options.length) {
                 host.innerHTML = '<p class="owner-picker-hint">No team members available.</p>';
@@ -3735,7 +4011,7 @@ function setDashboardFilter(field, value) {
             host.innerHTML = options.map(member => {
                 const on = dailyTaskResponsibles.includes(member);
                 return `<button type="button"
-                        class="owner-picker-btn${on ? ' is-selected' : ''}"
+                        class="owner-picker-btn${on ? ' is-selected' : ''}"${isMemberActive(member) ? '' : ' data-unavailable="true"'}
                         aria-pressed="${on}"
                         ${isPersonal ? 'disabled title="A personal task always belongs to you"' : `title="${on ? 'Remove' : 'Add'} ${escapeHtml(member)}"`}
                         onclick="toggleDailyTaskResponsible(${jsArg(member)})">
@@ -3915,7 +4191,7 @@ function setDashboardFilter(field, value) {
             const hoursRow = assignees.length
                 ? assignees.map(u => {
                     const h = getTaskHoursForUser(comment, u);
-                    return `<span class="day-task-chip${u === me ? ' is-me' : ''}">${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
+                    return `<span class="day-task-chip${u === me ? ' is-me' : ''}"${getMemberChipAttrs(u)}>${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
                 }).join('')
                 : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
 
@@ -3924,6 +4200,7 @@ function setDashboardFilter(field, value) {
 
                 <div class="task-detail-meta">
                     ${project ? `<span class="day-task-project">${escapeHtml(project.name)}</span>` : ''}
+                    ${isTrainingTask(comment) ? renderTrainingBadge() : ''}
                     <span class="task-detail-date">${formatDateDisplay(comment.date)}</span>
                     ${renderPriorityBadge(getUrgencyLevel(comment.urgency), getUrgencyLabel(comment.urgency))}
                     ${comment.hasIncident ? '<span class="task-detail-incident">INCIDENT</span>' : ''}
@@ -4033,6 +4310,7 @@ function setDashboardFilter(field, value) {
                 document.getElementById('commentUrgency').value = editedComment.urgency;
                 document.getElementById('commentIncident').checked = editedComment.hasIncident;
                 document.getElementById('commentPersonal').checked = !!editedComment.isPersonal;
+                document.getElementById('commentTraining').checked = isTrainingTask(editedComment);
                 document.getElementById('commentText').value = editedComment.text;
                 if (descInput) descInput.value = editedComment.description || '';
 
@@ -4046,6 +4324,7 @@ function setDashboardFilter(field, value) {
                 document.getElementById('commentUrgency').value = 'Normal';
                 document.getElementById('commentIncident').checked = false;
                 document.getElementById('commentPersonal').checked = false;
+                syncTrainingCheckbox('commentTraining', select.value);
                 document.getElementById('commentText').value = '';
                 if (descInput) descInput.value = '';
                 if (hoursInput) hoursInput.value = '';
@@ -4094,6 +4373,7 @@ function setDashboardFilter(field, value) {
             document.getElementById('commentUrgency').value = 'Normal';
             document.getElementById('commentIncident').checked = false;
             document.getElementById('commentPersonal').checked = false;
+            document.getElementById('commentTraining').checked = false;
 
             const desc = document.getElementById('commentDescription');
             if (desc) desc.value = '';
@@ -4146,6 +4426,7 @@ function setDashboardFilter(field, value) {
             const description = (document.getElementById('commentDescription') || {}).value || '';
             const urgency = document.getElementById('commentUrgency').value;
             const hasIncident = document.getElementById('commentIncident').checked;
+            const taskType = readTaskTypeFromCheckbox('commentTraining');
             const text = document.getElementById('commentText').value.trim();
             const dateKey = document.getElementById('dailyModal').dataset.dateKey;
 
@@ -4182,6 +4463,7 @@ function setDashboardFilter(field, value) {
                         owner_initials: ownerInitials,
                         urgency,
                         has_incident: hasIncident,
+                        task_type: taskType,
                         text
                     })
                     .eq('id', editingCommentId)
@@ -4219,6 +4501,7 @@ function setDashboardFilter(field, value) {
                         owner_initials: ownerInitials,
                         urgency,
                         has_incident: hasIncident,
+                        task_type: taskType,
                         user_name: currentUser,
                         text
                     });
@@ -4350,14 +4633,14 @@ function setDashboardFilter(field, value) {
                 const isDetailOpen = expandedCommentDetails.has(c.id);
                 const urgencyBadge = renderPriorityBadge(getUrgencyLevel(c.urgency), getUrgencyLabel(c.urgency));
 
-                html += `<div class="comment-entry ${completedClass}">
+                html += `<div class="comment-entry ${completedClass}${isTrainingTask(c) ? ' is-training' : ''}">
                 <div class="comment-checkbox-wrapper">
                     <input type="checkbox" class="comment-checkbox"
                            ${c.completed ? 'checked' : ''}
                            aria-label="Mark as completed"
                            onclick="toggleCommentCompletion(event, '${c.id}')">
                     <div class="comment-main">
-                        <div class="comment-header">${formattedDate} [${escapeHtml(c.userName || "ND")}]${completedBadge}${personalBadge}</div>
+                        <div class="comment-header">${formattedDate} [${escapeHtml(c.userName || "ND")}]${completedBadge}${personalBadge}${isTrainingTask(c) ? ' ' + renderTrainingBadge() : ''}</div>
                         <div class="comment-meta">Owner: [${escapeHtml(owners.length ? owners.join(', ') : 'ND')}] ${urgencyBadge}${c.description ? ' <span class="comment-desc-hint" title="Has a description">📝</span>' : ''}</div>
                         <button type="button" class="comment-text comment-text--clickable" aria-expanded="${isDetailOpen}"
                                 aria-controls="commentDetail_${c.id}" title="${isDetailOpen ? 'Hide details' : 'Show details'}"
@@ -4442,7 +4725,7 @@ function setDashboardFilter(field, value) {
             const ownerChips = assignees.length
                 ? assignees.map(u => {
                     const h = getTaskHoursForUser(comment, u);
-                    return `<span class="day-task-chip${u === me ? ' is-me' : ''}">${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
+                    return `<span class="day-task-chip${u === me ? ' is-me' : ''}"${getMemberChipAttrs(u)}>${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
                 }).join('')
                 : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
 
@@ -4755,20 +5038,29 @@ function setDashboardFilter(field, value) {
                     update.end_date = value || null;
                     project.endDate = value || null;
                     break;
-                case 'phase':
+                case 'phase': {
+                    // Entrar o salir de Training cambia qué campos tiene la
+                    // ficha (sin savings, BAU owner ni prerrequisitos).
+                    const trainingChanged = (value === TRAINING_PHASE) !== isTrainingProject(project);
                     update.phase = value;
                     project.phase = value;
                     renderProjectsList();
+                    if (trainingChanged && currentView === 'ficha' && currentProjectId === projectId) renderFicha();
                     break;
+                }
                 case 'bauOwner':
                     update.bau_owner = value || null;
                     project.bauOwner = value || '';
                     break;
 
-                case 'volume':
-                    update.volume = value;
-                    project.volume = value;
+                // volume (€) ya no se edita: los savings son en horas al año.
+                // La columna se conserva con los valores antiguos.
+                case 'savingsHours': {
+                    const hours = parseSavingsHours(value);
+                    update.savings_hours = hours;
+                    project.savingsHours = hours;
                     break;
+                }
                 case 'stakeholders':
                     update.stakeholders = value;
                     project.stakeholders = value;
@@ -4810,6 +5102,13 @@ function setDashboardFilter(field, value) {
                     update.fte = fteVal;   // <--- ESTO ES CRUCIAL (minúsculas)
                     project.fte = fteVal;  // Actualización local (lo que ves en consola)
                     break;
+                // Ahorro real medido (real_fte). Vacío = aún sin medir (null).
+                case 'realFte': {
+                    const realFte = parseOptionalNonNegative(value);
+                    update.real_fte = realFte;
+                    project.realFte = realFte;
+                    break;
+                }
                 case 'responsibles':
                     const cleanedResponsibles = sanitizeResponsiblesList(value);
                     update.responsibles = cleanedResponsibles;
@@ -5892,6 +6191,46 @@ function renderLastStatusWidget() {
         // =====================================================
 
 
+        // Savings en € de antes del cambio a horas: se enseñan en solo
+        // lectura mientras el proyecto no tenga savings_hours, para que
+        // el owner sepa qué había y lo pase a horas.
+        function renderLegacyEuroSavingsHint(project) {
+            const euros = Number(project && project.volume) || 0;
+            if (euros <= 0 || parseSavingsHours(project.savingsHours) !== null) return '';
+            return `<p class="ficha-legacy-hint">Previously recorded: ${euros.toLocaleString('en-GB')} €. Savings are now tracked in hours per year.</p>`;
+        }
+
+        // Horas registradas en un proyecto Training durante el año en curso,
+        // por persona. Suma tareas de Daily y tareas de día con fecha.
+        function getTrainingHoursThisYear(projectId) {
+            const year = String(new Date().getFullYear());
+            const byUser = {};
+            const tasks = (dailyComments || []).filter(c => !c.parentId && c.projectId === projectId)
+                .concat((dayTasks || []).filter(t => t.projectId === projectId));
+            tasks.forEach(task => {
+                if (!task.date || !String(task.date).startsWith(year)) return;
+                getTaskAssignees(task).forEach(user => {
+                    const hours = getTaskHoursForUser(task, user);
+                    if (hours > 0) byUser[user] = (byUser[user] || 0) + hours;
+                });
+            });
+            return byUser;
+        }
+
+        function renderTrainingFichaFields(project) {
+            const byUser = getTrainingHoursThisYear(project.id);
+            const users = Object.keys(byUser).sort();
+            const total = users.reduce((sum, u) => sum + byUser[u], 0);
+            return `<div class="ficha-field ficha-field--wide">
+            <div class="ficha-label">Training hours this year</div>
+            <div class="ficha-value">
+                <span class="training-hours-total">${formatHours(total)} h</span>
+                ${users.map(u => `<span class="day-task-chip"${getMemberChipAttrs(u)}>${escapeHtml(u)} · ${formatHours(byUser[u])}h</span>`).join('')}
+                <p class="form-hint">Log each training as a task in this project, with its hours and the Training option ticked.</p>
+            </div>
+        </div>`;
+        }
+
         function renderFicha() {
             if (!currentProjectId) {
                 document.getElementById('fichaView').innerHTML = `<div class="empty-state">Select a project to see its details.</div>`;
@@ -5905,6 +6244,8 @@ function renderLastStatusWidget() {
                 document.getElementById('fichaView').innerHTML = `<div class="empty-state">Project not found.</div>`;
                 return;
             }
+
+            const isTraining = isTrainingProject(project);
 
             // Progress
             const progressPercent = project.progress || 0;
@@ -5957,14 +6298,14 @@ function renderLastStatusWidget() {
                     <button type="button" class="resp-btn-header" data-project-id="${project.id}" title="Add owner" aria-label="Add owner" onclick="openResponsiblesPopover('${project.id}')">+</button>
                     <div class="resp-badges-header">
                         ${project.responsibles && project.responsibles.length > 0 ? project.responsibles.map(resp => `
-                            <span class="resp-badge-header">${escapeHtml(resp)} <button type="button" onclick="removeResponsible('${project.id}', '${resp}')" class="resp-remove-header" title="Remove ${escapeHtml(resp)}" aria-label="Remove owner ${escapeHtml(resp)}">✕</button></span>
+                            <span class="resp-badge-header"${getMemberChipAttrs(resp)}>${escapeHtml(resp)} <button type="button" onclick="removeResponsible('${project.id}', '${resp}')" class="resp-remove-header" title="Remove ${escapeHtml(resp)}" aria-label="Remove owner ${escapeHtml(resp)}">✕</button></span>
                         `).join('') : ''}
                     </div>
                 </span>
             </div>
         </div>
 
-        <div class="progress-indicator-centered">
+        <div class="progress-indicator-centered"${isTraining ? ' hidden' : ''}>
             <div class="progress-ring-wrap" title="Project progress">
                 <svg class="progress-ring" viewBox="0 0 72 72" width="72" height="72" aria-hidden="true">
                     <defs>
@@ -5997,13 +6338,11 @@ function renderLastStatusWidget() {
         </div>
 
         <div class="status-badge-container">
-            <div class="status-badge status-${(project.status || 'Verde').toLowerCase()}" role="button" tabindex="0" aria-haspopup="true" aria-label="Status: ${getStatusText(project.status || 'Verde')}. Click to change" onclick="toggleIndicatorDropdown(event, 'status')" onkeydown="handleIndicatorKey(event, 'status')">
+            <div class="status-badge status-${getStatusCssKey(project.status)}" role="button" tabindex="0" aria-haspopup="true" aria-label="Status: ${getStatusText(project.status || 'Verde')}. Click to change" onclick="toggleIndicatorDropdown(event, 'status')" onkeydown="handleIndicatorKey(event, 'status')">
                 <span class="status-icon">${getStatusIcon(project.status || 'Verde')}</span>
                 <span class="status-text">${getStatusText(project.status || "Verde")}</span>
                 <div class="indicator-dropdown" id="dropdown-status">
-                    <div class="indicator-option ${(project.status || 'Verde') === 'Verde' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Verde')" onkeydown="activateOnEnterOrSpace(event)"><span class="status-dot status-dot--verde"></span> On Track</div>
-                    <div class="indicator-option ${project.status === 'Ámbar' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Ámbar')" onkeydown="activateOnEnterOrSpace(event)"><span class="status-dot status-dot--ámbar"></span> At Risk</div>
-                    <div class="indicator-option ${project.status === 'Rojo' ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', 'Rojo')" onkeydown="activateOnEnterOrSpace(event)"><span class="status-dot status-dot--rojo"></span> Blocked</div>
+                    ${PROJECT_STATUSES.map(s => `<div class="indicator-option ${getStatusDef(project.status).value === s.value ? 'selected' : ''}" role="button" tabindex="0" onclick="updateIndicator(event, '${project.id}', 'status', ${jsArg(s.value)})" onkeydown="activateOnEnterOrSpace(event)"><span class="status-dot status-dot--${s.dot}"></span> ${s.label}</div>`).join('')}
                 </div>
             </div>
         </div>
@@ -6040,16 +6379,17 @@ function renderLastStatusWidget() {
                 </select>
             </div>
         </div>
-        <div class="ficha-field">
-            <div class="ficha-label">Savings (€)</div>
+        ${isTraining ? renderTrainingFichaFields(project) : `<div class="ficha-field">
+            <div class="ficha-label">Savings (h/year)</div>
             <div class="ficha-value">
                 <input type="number"
-                       placeholder="0.00"
-                       aria-label="Savings in euros"
-                       step="0.01"
+                       placeholder="0"
+                       aria-label="Savings in hours per year"
+                       step="0.5"
                        min="0"
-                       value="${project.volume || ''}"
-                       onchange="updateProjectField('${project.id}','volume', this.value)">
+                       value="${project.savingsHours === null || project.savingsHours === undefined ? '' : project.savingsHours}"
+                       onchange="updateProjectField('${project.id}','savingsHours', this.value)">
+                ${renderLegacyEuroSavingsHint(project)}
             </div>
         </div>
         <div class="ficha-field">
@@ -6065,15 +6405,28 @@ function renderLastStatusWidget() {
             </div>
         </div>
         <div class="ficha-field">
-            <div class="ficha-label">Savings (FTE)</div>
+            <div class="ficha-label">Estimated savings (FTE)</div>
             <div class="ficha-value">
                 <input type="number"
                        placeholder="0.0"
-                       aria-label="Savings in FTE"
+                       aria-label="Estimated savings in FTE"
                        step="0.1"
                        min="0"
                        value="${project.fte || ''}"
                        onchange="updateProjectField('${project.id}','fte', this.value)">
+            </div>
+        </div>
+        <div class="ficha-field">
+            <div class="ficha-label">Real savings (FTE)</div>
+            <div class="ficha-value">
+                <input type="number"
+                       placeholder="Not measured yet"
+                       aria-label="Real savings in FTE"
+                       title="Savings actually measured once the solution is live"
+                       step="0.1"
+                       min="0"
+                       value="${project.realFte === null || project.realFte === undefined ? '' : project.realFte}"
+                       onchange="updateProjectField('${project.id}','realFte', this.value)">
             </div>
         </div>
         <div class="ficha-field">
@@ -6083,7 +6436,7 @@ function renderLastStatusWidget() {
                     ${renderBauOwnerOptions(project.bauOwner)}
                 </select>
             </div>
-        </div>
+        </div>`}
         </div>
     </section>`;
 
@@ -6094,7 +6447,8 @@ function renderLastStatusWidget() {
             // ítems estándar a false/N/A por defecto si el proyecto aún
             // no tiene datos guardados (antes se ocultaba la sección
             // entera cuando project.prerequisites estaba vacío o ausente).
-            {
+            // Un proyecto Training no es un proyecto de negocio: sin prerrequisitos.
+            if (!isTraining) {
 
                 html += `<section class="bento-card bento-card--prereq">
         <h3 class="bento-title">Prerequisites &amp; Documentation</h3>
@@ -6212,7 +6566,7 @@ function renderLastStatusWidget() {
                     const ownerChips = assignees.length
                         ? assignees.map(u => {
                             const h = getTaskHoursForUser(comment, u);
-                            return `<span class="day-task-chip${u === me ? ' is-me' : ''}">${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
+                            return `<span class="day-task-chip${u === me ? ' is-me' : ''}"${getMemberChipAttrs(u)}>${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
                         }).join('')
                         : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
                     const totalHours = getTaskTotalHours(comment);
@@ -6302,7 +6656,8 @@ const PHASE_CHART_COLORS = {
     'BAU': 'phase-color-bau',
     'Completed': 'phase-color-completed',
     'Cancelled': 'phase-color-cancelled',
-    'On Hold': 'phase-color-hold'
+    'On Hold': 'phase-color-hold',
+    'Training': 'phase-color-training'
 };
 
 function buildPhaseDonutHtml(projectsForChart) {
@@ -6463,8 +6818,10 @@ function renderDashboard() {
     // reporta sobre proyectos vivos. Declarándolo aquí, las ~15
     // lecturas de `projects` que hay más abajo excluyen los archivados
     // sin tener que tocarlas una por una. Los borrados ya no están en
-    // la global (viven en deletedProjects).
-    const projects = getLiveProjects();
+    // la global (viven en deletedProjects). Los Training tampoco: no
+    // son portfolio (sus horas sí salen en el widget de capacidad, que
+    // lee la global).
+    const projects = getLiveProjects().filter(p => !isTrainingProject(p));
 
     if (!projects || !projects.length) {
         container.innerHTML = `<div class="empty-state">No projects yet. Create one to see the dashboard.</div>`;
@@ -6514,9 +6871,10 @@ function renderDashboard() {
                 <button type="button" class="dash-filter-trigger" onclick="toggleDashFilterMenu(event,'status')">Status${(dashboardFilters.estados||[]).length ? ` (${dashboardFilters.estados.length})` : ''} ▾</button>
                 <div class="${dashFilterMenuClass('status')}">
                     <div class="dash-pills dash-pills--menu">
-                        <button type="button" class="dash-pill dash-pill--verde${(dashboardFilters.estados||[]).includes('Verde') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Verde')}" onclick="toggleDashFilter('estados','Verde')"><span class="dash-dot dash-dot--verde"></span> On Track</button>
-                        <button type="button" class="dash-pill dash-pill--ambar${(dashboardFilters.estados||[]).includes('Ámbar') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Ámbar')}" onclick="toggleDashFilter('estados','Ámbar')"><span class="dash-dot dash-dot--ambar"></span> At Risk</button>
-                        <button type="button" class="dash-pill dash-pill--rojo${(dashboardFilters.estados||[]).includes('Rojo') ? ' active' : ''}" aria-pressed="${(dashboardFilters.estados||[]).includes('Rojo')}" onclick="toggleDashFilter('estados','Rojo')"><span class="dash-dot dash-dot--rojo"></span> Blocked</button>
+                        ${PROJECT_STATUSES.map(s => {
+                            const on = (dashboardFilters.estados || []).includes(s.value);
+                            return `<button type="button" class="dash-pill dash-pill--${s.dot}${on ? ' active' : ''}" aria-pressed="${on}" onclick="toggleDashFilter('estados',${jsArg(s.value)})"><span class="dash-dot dash-dot--${s.dot}"></span> ${s.label}</button>`;
+                        }).join('')}
                     </div>
                 </div>
             </div>
@@ -6645,8 +7003,9 @@ function renderDashboard() {
         return true;
     });
 
-    let totalVolume = 0;
+    let totalSavingsHours = 0;
     let totalFte = 0;
+    let totalRealFte = 0;
 
     // Tabla de proyectos
     html += `
@@ -6691,8 +7050,9 @@ function renderDashboard() {
                         ${renderSortableHeader('impact', 'Impact', dashboardSort, 'toggleDashboardSort')}
                         ${renderSortableHeader('status', 'Status', dashboardSort, 'toggleDashboardSort')}
                         ${renderSortableHeader('progress', 'Progress', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('volume', 'Savings €', dashboardSort, 'toggleDashboardSort')}
-                        ${renderSortableHeader('fte', 'Savings FTE', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('savingsHours', 'Savings h/year', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('fte', 'Est. FTE', dashboardSort, 'toggleDashboardSort')}
+                        ${renderSortableHeader('realFte', 'Real FTE', dashboardSort, 'toggleDashboardSort')}
                     </tr>
                 </thead>
                 <tbody>`;
@@ -6701,17 +7061,19 @@ function renderDashboard() {
     const sortedProjects = sortDashboardProjects(filteredProjects);
 
     if (!sortedProjects.length) {
-        html += `<tr><td colspan="10" class="table-empty">No projects match the selected filters.</td></tr>`;
+        html += `<tr><td colspan="11" class="table-empty">No projects match the selected filters.</td></tr>`;
     }
 
     sortedProjects.forEach(p => {
         const start = formatDateDisplay(p.startDate);
         const end = formatDateDisplay(p.endDate);
         const progress = isNaN(parseInt(p.progress, 10)) ? 0 : parseInt(p.progress, 10);
-        const volume = Number(p.volume) || 0;
+        const savingsHours = parseSavingsHours(p.savingsHours);
         const fte = Number(p.fte) || 0;
-        totalVolume += volume;
+        totalSavingsHours += savingsHours || 0;
         totalFte += fte;
+        const realFte = parseOptionalNonNegative(p.realFte);
+        totalRealFte += realFte || 0;
         html += `
         <tr class="dashboard-row" tabindex="0" onclick="hideStatusTooltip(); selectProject('${p.id}')" onkeydown="activateOnEnterOrSpace(event)"
             onmouseenter="showStatusTooltip(event, '${p.id}')"
@@ -6722,15 +7084,16 @@ function renderDashboard() {
             <td><span class="badge badge-fase">${p.phase || '-'}</span></td>
             <td><span class="badge badge-${(p.priority || 'Media').toLowerCase()}">${p.priority ? getPriorityLabel(p.priority) : '-'}</span></td>
             <td><span class="badge badge-${(p.impact || 'Medio').toLowerCase()}">${p.impact ? getImpactLabel(p.impact) : '-'}</span></td>
-            <td><span class="badge badge-status badge-${(p.status || 'Verde').toLowerCase()}">${getStatusText(p.status) || '-'}</span></td>
+            <td><span class="badge badge-status badge-${getStatusCssKey(p.status)}">${getStatusText(p.status) || '-'}</span></td>
             <td>
                 <div class="progress-bar-container" role="progressbar" aria-label="Progress" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: ${progress}%"></div>
                     <span class="progress-bar-text">${progress}%</span>
                 </div>
             </td>
-            <td class="dash-num-center">${volume.toLocaleString('en-GB')}</td>
+            <td class="dash-num-center">${formatSavingsHours(savingsHours)}</td>
             <td class="dash-num-center">${fte.toLocaleString('en-GB', { minimumFractionDigits: 1 })}</td>
+            <td class="dash-num-center">${realFte === null ? '-' : realFte.toLocaleString('en-GB', { minimumFractionDigits: 1 })}</td>
         </tr>`;
     });
 
@@ -6743,12 +7106,16 @@ function renderDashboard() {
             <div class="summary-title">Totals</div>
             <div class="summary-row">
                 <div class="summary-item">
-                    <div class="summary-label">Total savings €</div>
-                    <div class="summary-value">${totalVolume.toLocaleString('en-GB')} €</div>
+                    <div class="summary-label">Total savings (hours/year)</div>
+                    <div class="summary-value">${formatSavingsHours(totalSavingsHours)}</div>
                 </div>
                 <div class="summary-item">
-                    <div class="summary-label">Total savings FTE</div>
+                    <div class="summary-label">Total estimated savings FTE</div>
                     <div class="summary-value">${totalFte.toLocaleString('en-GB', { minimumFractionDigits: 1 })}</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-label">Total real savings FTE</div>
+                    <div class="summary-value">${totalRealFte.toLocaleString('en-GB', { minimumFractionDigits: 1 })}</div>
                 </div>
             </div>
         </div>
@@ -6898,21 +7265,24 @@ function sortDashboardProjects(projects) {
                 bVal = impactOrder[b.impact] || 0;
                 break;
             case 'status':
-                const statusOrder = { 'Rojo': 3, 'Ámbar': 2, 'Verde': 1 };
-                aVal = statusOrder[a.status] || 0;
-                bVal = statusOrder[b.status] || 0;
+                aVal = getStatusDef(a.status).rank;
+                bVal = getStatusDef(b.status).rank;
                 break;
             case 'progress':
                 aVal = parseInt(a.progress, 10) || 0;
                 bVal = parseInt(b.progress, 10) || 0;
                 break;
-            case 'volume':
-                aVal = Number(a.volume) || 0;
-                bVal = Number(b.volume) || 0;
+            case 'savingsHours':
+                aVal = parseSavingsHours(a.savingsHours) || 0;
+                bVal = parseSavingsHours(b.savingsHours) || 0;
                 break;
             case 'fte':
                 aVal = Number(a.fte) || 0;
                 bVal = Number(b.fte) || 0;
+                break;
+            case 'realFte':
+                aVal = parseOptionalNonNegative(a.realFte) || 0;
+                bVal = parseOptionalNonNegative(b.realFte) || 0;
                 break;
             default:
                 return 0;
@@ -7047,11 +7417,14 @@ function sortDailyProjects(projects) {
             ficha: 'Project Card',
             equipo: 'Team Calendar',
             dashboard: 'Projects Dashboard',
-            tasks: 'My Tasks'
+            tasks: 'My Tasks',
+            admin: 'Team Management'
         };
 
         function switchView(view) {
             if (!VIEW_TITLES[view]) return;
+            // Ocultar el botón no basta: se comprueba el rol también aquí.
+            if (view === 'admin' && !isCurrentUserAdmin()) return;
             closeMobileSidebar();
             closeAllDropdowns();
             closeResponsiblesPopover();
@@ -7099,6 +7472,7 @@ function sortDailyProjects(projects) {
             else if (currentView === 'equipo') renderTeamView();
             else if (currentView === 'dashboard') renderDashboard();
             else if (currentView === 'tasks') renderTasksView();
+            else if (currentView === 'admin') renderAdminView();
             updateTasksViewCount();
         }
 
@@ -7148,13 +7522,17 @@ function sortDailyProjects(projects) {
                 stakeholders: p.stakeholders || "",
                 description: p.description || "",
                 country: p.country || "",
+                // volume = savings en € heredados: ya no se editan, solo se
+                // enseñan como "legacy" mientras no haya savings_hours.
                 volume: p.volume || "",
+                savingsHours: parseSavingsHours(p.savings_hours),
                 prerequisites: p.prerequisites || [],
                 priority: p.priority || "Media",
                 impact: p.impact || "Medio",
                 status: p.status || "Verde",
                 progress: p.progress || 0,
                 fte: p.fte,
+                realFte: parseOptionalNonNegative(p.real_fte),
                 responsibles: sanitizeResponsiblesList(p.responsibles),
                 archivedAt: p.archived_at || null,
                 archivedBy: p.archived_by || '',
@@ -7221,6 +7599,7 @@ function sortDailyProjects(projects) {
                 isPersonal: !!c.is_personal,
                 ownerInitials: normalizeInitials(c.owner_initials || c.user_name || ''),
                 urgency: c.urgency || 'Normal',
+                taskType: normalizeTaskType(c.task_type),
                 hasIncident: !!c.has_incident,
                 text: c.text || '',
                 completed: !!c.completed,
@@ -7295,7 +7674,16 @@ function sortDailyProjects(projects) {
             try {
                 // Las ausencias van aparte: loadDataFromSupabase no las lee
                 // (y su destructuring posicional no admite colarlas ahí).
-                await Promise.all([loadDataFromSupabase(true), loadTeamVacations()]);
+                // El directorio también: un alta o baja hecha por un admin
+                // tiene que llegar a los selectores de todos sin recargar.
+                await Promise.all([loadDataFromSupabase(true), loadTeamVacations(), loadUserDirectory(true)]);
+                if (!isMemberActive(currentUser)) {
+                    showToast('Your account is no longer active.', 'warning');
+                    setTimeout(logoutCurrentUser, 1500);
+                    return;
+                }
+                syncTeamMembersInSelectors();
+                syncAdminNavButton();
                 renderActiveView();
                 refreshOpenOverlays();
             } finally {
@@ -7411,6 +7799,7 @@ function sortDailyProjects(projects) {
             <li class="legend-filterable${vacationLegendFilter === 'next_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('next_year')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight next year only"><span class="legend-swatch legend-swatch--next"></span>Next year</li>
             <li class="legend-filterable${vacationLegendFilter === 'willis_choice' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('willis_choice')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight WTW Choice only"><span class="legend-swatch legend-swatch--willis"></span>WTW Choice</li>
             <li class="legend-filterable${vacationLegendFilter === 'absence' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('absence')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight absences that do not use the leave balance"><span class="legend-swatch legend-swatch--absence"></span>Absence (not charged)</li>
+            <li title="Morning off: top-left half. Afternoon off: bottom-right half."><span class="legend-swatch legend-swatch--half"></span>Half day</li>
             <li><span class="legend-swatch legend-swatch--selected"></span>Selected</li>
             <li><span class="legend-swatch legend-swatch--holiday"></span>Public holiday</li>
             <li><span class="legend-swatch legend-swatch--weekend"></span>Weekend</li>
@@ -7460,9 +7849,11 @@ function sortDailyProjects(projects) {
                 else if (vacation.vacation_type === 'next_year') cellClass += ' vacation-next-year';
                 else if (vacation.vacation_type === 'willis_choice') cellClass += ' vacation-willis-choice';
                 if (vacationLegendFilter && legendKey !== vacationLegendFilter) cellClass += ' legend-dim';
+                if (isHalfDayLeave(vacation)) cellClass += ` leave-half leave-half--${getDayPortion(vacation)}`;
             }
 
-            const tooltip = `${member} · ${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}${isHoliday ? ` · Public holiday: ${holidayName}` : ''}${vacation ? ` · ${describeAbsenceFor(vacation, currentUser)}` : ''}`;
+            const portionText = vacation && isHalfDayLeave(vacation) ? ` (${DAY_PORTIONS[getDayPortion(vacation)].toLowerCase()} only)` : '';
+            const tooltip = `${member} · ${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}${isHoliday ? ` · Public holiday: ${holidayName}` : ''}${vacation ? ` · ${describeAbsenceFor(vacation, currentUser)}${portionText}` : ''}`;
             return `<td class="${cellClass.trim()}" onclick="toggleVacation('${member}', '${dateKey}', event)" title="${escapeHtml(tooltip)}"></td>`;
         }
 
@@ -7612,7 +8003,7 @@ function sortDailyProjects(projects) {
 
             // Calcular totales por usuario. Solo las vacaciones restan saldo;
             // bajas y asuntos personales van aparte y por año natural.
-            const sumDays = list => list.reduce((sum, v) => sum + (Number(v.days_count) || 0), 0);
+            const sumDays = list => list.reduce((sum, v) => sum + getLeaveDays(v), 0);
             const summary = teamMembers.map(member => {
                 const own = teamVacations.filter(v => v.user_initials === member);
                 const charged = own.filter(v => isVacationAbsence(v) && getVacationAccrualYear(v) === vacationBalanceYear);
@@ -7624,7 +8015,7 @@ function sortDailyProjects(projects) {
                 const otherByType = {};
                 otherAbsences.forEach(v => {
                     const type = getAbsenceType(v);
-                    otherByType[type] = (otherByType[type] || 0) + (Number(v.days_count) || 0);
+                    otherByType[type] = (otherByType[type] || 0) + getLeaveDays(v);
                 });
 
                 return {
@@ -7640,9 +8031,9 @@ function sortDailyProjects(projects) {
             // El desglose por motivo solo para el titular; el resto ve el total.
             const describeOtherAbsences = s => {
                 if (!s.otherDays) return '';
-                if (s.member !== normalizeInitials(currentUser || '')) return `${s.otherDays} absent`;
+                if (s.member !== normalizeInitials(currentUser || '')) return `${formatLeaveDays(s.otherDays)} absent`;
                 return Object.entries(s.otherByType)
-                    .map(([type, days]) => `${days} ${ABSENCE_TYPES[type].toLowerCase()}`)
+                    .map(([type, days]) => `${formatLeaveDays(days)} ${ABSENCE_TYPES[type].toLowerCase()}`)
                     .join(' · ');
             };
 
@@ -7690,9 +8081,10 @@ function sortDailyProjects(projects) {
                 const end = new Date(v.end_date);
                 if (isNaN(start) || isNaN(end)) return;
                 const cursor = new Date(start);
+                const perDay = isHalfDayLeave(v) ? 0.5 : 1;
                 while (cursor <= end) {
                     if (cursor.getFullYear() === year) {
-                        monthTotals[cursor.getMonth()] += 1;
+                        monthTotals[cursor.getMonth()] += perDay;
                     }
                     cursor.setDate(cursor.getDate() + 1);
                 }
@@ -7704,7 +8096,7 @@ function sortDailyProjects(projects) {
             const bars = monthTotals.map((total, i) => {
                 const heightPct = Math.max(Math.round((total / maxTotal) * 100), total > 0 ? 6 : 0);
                 return `
-                <div class="vacation-month-bar-wrap" title="${monthNames[i]} ${year}: ${total} person-day(s)">
+                <div class="vacation-month-bar-wrap" title="${monthNames[i]} ${year}: ${formatLeaveDays(total)} person-day(s)">
                     <div class="vacation-month-bar" style="height:${heightPct}%"></div>
                     <span class="vacation-month-bar-label">${monthNames[i]}</span>
                 </div>`;
@@ -7879,7 +8271,9 @@ function sortDailyProjects(projects) {
 
             // Si existe vacación, permitir eliminarla siempre
             if (existing) {
-                const confirmDelete = confirm(`Remove ${existing.days_count} leave day(s)?`);
+                const confirmDelete = confirm(isHalfDayLeave(existing)
+                    ? `Remove this half-day leave (${DAY_PORTIONS[getDayPortion(existing)].toLowerCase()})?`
+                    : `Remove ${formatLeaveDays(getLeaveDays(existing))} leave day(s)?`);
                 if (confirmDelete) {
                     deleteVacation(existing.id);
                 }
@@ -7915,7 +8309,16 @@ function sortDailyProjects(projects) {
                 <option value="next_year">Next year (${currentYear + 1})</option>
                 <option value="willis_choice">WTW Choice (${currentYear})</option>
             `;
-            selectionLabel.textContent = `${datesToAdd.length} ${datesToAdd.length === 1 ? 'full day' : 'full days'}`;
+            // Medio día solo con un día seleccionado: con varios, cada día
+            // es completo (un medio día suelto se marca aparte).
+            const single = datesToAdd.length === 1;
+            document.querySelectorAll('input[name="leaveDayPortion"]').forEach(r => {
+                r.checked = r.value === 'full';
+                if (r.value !== 'full') r.disabled = !single;
+            });
+            const portionHint = document.getElementById('leaveDayPortionHint');
+            if (portionHint) portionHint.hidden = single;
+            onLeaveDayPortionChange();
             onAbsenceTypeChange();
             openModal('vacationOptionsModal', '#absenceTypeSelect');
         }
@@ -7932,6 +8335,22 @@ function sortDailyProjects(projects) {
                     ? 'Uses your leave balance.'
                     : 'Does not use your leave balance. Only you see the reason; the team sees “Absent”.';
             }
+        }
+
+        function getSelectedLeaveDayPortion() {
+            const checked = document.querySelector('input[name="leaveDayPortion"]:checked');
+            const value = checked ? checked.value : 'full';
+            return DAY_PORTIONS[value] ? value : 'full';
+        }
+
+        function onLeaveDayPortionChange() {
+            const label = document.getElementById('vacationSelectionLabel');
+            if (!label || !pendingVacationSelection) return;
+            const count = pendingVacationSelection.dates.length;
+            const portion = getSelectedLeaveDayPortion();
+            label.textContent = portion === 'full'
+                ? `${count} ${count === 1 ? 'full day' : 'full days'}`
+                : `Half day · ${DAY_PORTIONS[portion].toLowerCase()} (counts as 0.5 days)`;
         }
 
         function closeVacationOptionsModal() {
@@ -7955,11 +8374,12 @@ function sortDailyProjects(projects) {
                 : vacationType === 'next_year' ? currentYear + 1
                 : currentYear;
             const selection = pendingVacationSelection;
+            const dayPortion = selection.dates.length === 1 ? getSelectedLeaveDayPortion() : 'full';
             closeVacationOptionsModal();
-            await addVacationWithDateRange(selection.member, selection.dates, vacationType, vacationYear, absenceType);
+            await addVacationWithDateRange(selection.member, selection.dates, vacationType, vacationYear, absenceType, dayPortion);
         }
 
-        async function addVacationWithDateRange(member, dateKeysArray, vacationType, vacationYear, absenceType = 'vacation') {
+        async function addVacationWithDateRange(member, dateKeysArray, vacationType, vacationYear, absenceType = 'vacation', dayPortion = 'full') {
             if (!dateKeysArray || dateKeysArray.length === 0) return;
 
             // Weekends and public holidays are non-working days, so they never
@@ -7992,7 +8412,9 @@ function sortDailyProjects(projects) {
                 vacation_type: vacationType,
                 vacation_year: vacationYear,
                 absence_type: absenceType,
-                days_count: 1
+                // days_count es integer: el medio día va en day_portion.
+                days_count: 1,
+                day_portion: dayPortion
             }));
 
             const { error } = await supabaseClient
@@ -8009,7 +8431,9 @@ function sortDailyProjects(projects) {
             await loadTeamVacations();
             renderTeamView();
             const label = absenceType === 'vacation' ? 'leave' : ABSENCE_TYPES[absenceType].toLowerCase();
-            showToast(`${vacationRecords.length} ${label} day${vacationRecords.length === 1 ? '' : 's'} added`, 'success');
+            showToast(dayPortion !== 'full'
+                ? `Half day of ${label} added (${DAY_PORTIONS[dayPortion].toLowerCase()})`
+                : `${vacationRecords.length} ${label} day${vacationRecords.length === 1 ? '' : 's'} added`, 'success');
         }
 
         async function deleteVacation(vacationId) {
@@ -8141,6 +8565,22 @@ function sortDailyProjects(projects) {
                 initialsInput.focus();
                 return;
             }
+            // Iniciales que ya aparecen en datos (de alguien que se las cambió
+            // o se dio de baja): reutilizarlas mezclaría dos historiales.
+            if (newInitials !== currentInitials && getTakenInitials().has(newInitials)) {
+                errorEl.textContent = `${newInitials} was used by someone before. Pick other initials.`;
+                initialsInput.focus();
+                return;
+            }
+            // Cambiar de iniciales borra la fila antigua de app_users (decisión
+            // de Teo, 28-oct-2026). El trabajo anterior no se toca: sigue con
+            // las iniciales antiguas y deja de estar ligado a esta persona.
+            if (newInitials !== currentInitials && !confirm(
+                `Change your initials from ${currentInitials} to ${newInitials}?\n\n` +
+                `Your previous projects and tasks will stay under ${currentInitials} (shown greyed out) and will no longer be linked to you. ` +
+                `From now on you sign in as ${newInitials}.`)) {
+                return;
+            }
 
             if (newPassword || newPasswordConfirm) {
                 if (newPassword.length < 6) {
@@ -8186,6 +8626,326 @@ function sortDailyProjects(projects) {
             showToast('Settings saved', 'success');
         }
 
+        // =====================================================
+        // ============ ADMIN: GESTIÓN DE USUARIOS =============
+        // Solo para app_users.is_admin (Ana Real y Teo Balsalobre).
+        // OJO: con RLS abierta esto es control de interfaz, no seguridad.
+        // Dar de baja = is_active false: la persona sale de los selectores,
+        // del calendario y de la capacidad futura, no puede entrar, y su
+        // trabajo antiguo se sigue viendo con sus iniciales en gris.
+        // Ver la skill team-member-lifecycle.
+        // =====================================================
+
+        const EMAIL_DOMAIN = 'wtwco.com';
+        // Partículas que no cuentan como apellido para las iniciales
+        // ("María de la Cruz" -> MC).
+        const NAME_PARTICLES = ['de', 'del', 'la', 'las', 'los', 'y', 'da', 'das', 'do', 'dos', 'van', 'von', 'di'];
+
+        let adminUserForm = { initialsEdited: false, emailEdited: false, created: null };
+
+        function syncAdminNavButton() {
+            const btn = document.getElementById('navAdminBtn');
+            const isAdmin = isCurrentUserAdmin();
+            if (btn) btn.hidden = !isAdmin;
+            if (!isAdmin && currentView === 'admin') switchView('daily');
+        }
+
+        function toAsciiLetters(value) {
+            return normalizeSearchText(value).replace(/[^a-z0-9 ]/g, ' ').trim();
+        }
+
+        function splitPersonName(firstName, lastName) {
+            const given = toAsciiLetters(firstName).split(/\s+/).filter(Boolean);
+            const surnames = toAsciiLetters(lastName).split(/\s+/).filter(w => w && !NAME_PARTICLES.includes(w));
+            return { given, surnames };
+        }
+
+        // Todas las iniciales que ya significan algo: las del directorio
+        // (activas o no) y las que aparecen en datos guardados, aunque ya no
+        // estén en app_users (p. ej. las antiguas de quien se las cambió).
+        // Reutilizarlas mezclaría el historial de dos personas.
+        function getTakenInitials() {
+            const taken = new Set(Object.keys(userDirectory));
+            excludedResponsibles.forEach(i => taken.add(i));
+            const add = value => { const i = normalizeInitials(value); if (i) taken.add(i); };
+            projects.concat(deletedProjects || []).forEach(p => (p.responsibles || []).forEach(add));
+            (dailyComments || []).forEach(c => { getTaskAssignees(c).forEach(add); add(c.userName); add(c.ownerInitials); });
+            (dayTasks || []).forEach(t => { (t.assignees || []).forEach(add); add(t.createdBy); });
+            (teamVacations || []).forEach(v => add(v.user_initials));
+            return taken;
+        }
+
+        // Iniciales = 1ª letra del nombre + 1ª del primer apellido (Teo
+        // Balsalobre -> TB). Si ya existen, se añade la inicial del segundo
+        // apellido (Ana Real Gómez -> ARG). Si aun así chocan, o no hay
+        // segundo apellido, un número. El admin las puede editar.
+        function generateUserInitials(firstName, lastName, taken = getTakenInitials()) {
+            const { given, surnames } = splitPersonName(firstName, lastName);
+            if (!given.length || !surnames.length) return '';
+            const base = (given[0][0] + surnames[0][0]).toUpperCase();
+            if (!taken.has(base)) return base;
+            if (surnames[1]) {
+                const withSecond = base + surnames[1][0].toUpperCase();
+                if (!taken.has(withSecond)) return withSecond;
+            }
+            for (let n = 2; n < 100; n++) {
+                if (!taken.has(base + n)) return base + n;
+            }
+            return '';
+        }
+
+        function generateUserEmail(firstName, lastName) {
+            const { given, surnames } = splitPersonName(firstName, lastName);
+            if (!given.length || !surnames.length) return '';
+            return `${given[0]}.${surnames[0]}@${EMAIL_DOMAIN}`;
+        }
+
+        function getMemberWorkSummary(initials) {
+            const key = normalizeInitials(initials);
+            const liveProjects = getLiveProjects().filter(p => (p.responsibles || []).includes(key)).length;
+            const openTasks = (dailyComments || []).filter(c => !c.parentId && !c.completed && getTaskAssignees(c).includes(key)).length
+                + (dayTasks || []).filter(t => !t.completed && (t.assignees || []).includes(key)).length;
+            return { liveProjects, openTasks };
+        }
+
+        function renderAdminView() {
+            const container = document.getElementById('adminView');
+            if (!container) return;
+            if (!isCurrentUserAdmin()) {
+                container.innerHTML = '<div class="empty-state">Only admins can manage users.</div>';
+                return;
+            }
+
+            const me = normalizeInitials(currentUser || '');
+            const people = Object.values(userDirectory).sort((a, b) =>
+                (a.isActive === b.isActive ? 0 : (a.isActive ? -1 : 1)) || a.initials.localeCompare(b.initials));
+            const activeAdmins = people.filter(p => p.isAdmin && p.isActive).length;
+
+            const rows = people.map(p => {
+                const fullName = [p.firstName, p.lastName].filter(Boolean).join(' ');
+                const nameHtml = fullName ? escapeHtml(fullName) : '<span class="admin-muted">No name</span>';
+                const region = p.holidayRegion || getMemberRegion(p.initials);
+                const isMe = p.initials === me;
+                const lastAdmin = p.isAdmin && p.isActive && activeAdmins <= 1;
+                const status = p.isActive
+                    ? '<span class="admin-status admin-status--active">Active</span>'
+                    : `<span class="admin-status admin-status--off">Unavailable${p.deactivatedAt ? ` since ${formatDateDisplay(String(p.deactivatedAt).slice(0, 10))}` : ''}</span>`;
+                const actions = p.isActive
+                    ? `<button type="button" class="comment-action-btn" onclick="toggleAdminRole(${jsArg(p.initials)})" ${isMe || (lastAdmin) ? 'disabled title="You cannot remove your own admin role or the last admin"' : ''}>${p.isAdmin ? 'Remove admin' : 'Make admin'}</button>
+                       <button type="button" class="comment-action-btn" onclick="resetUserPassword(${jsArg(p.initials)})">Reset password</button>
+                       <button type="button" class="comment-action-btn comment-action-btn--danger" onclick="deactivateUser(${jsArg(p.initials)})" ${isMe || lastAdmin ? 'disabled title="You cannot deactivate yourself or the last admin"' : ''}>Mark unavailable</button>`
+                    : `<button type="button" class="comment-action-btn" onclick="reactivateUser(${jsArg(p.initials)})">Reactivate</button>`;
+                return `<tr class="${p.isActive ? '' : 'admin-row--off'}">
+                    <td><strong>${escapeHtml(p.initials)}</strong>${isMe ? ' <span class="admin-muted">(you)</span>' : ''}</td>
+                    <td>${nameHtml}</td>
+                    <td>${escapeHtml(p.email || '')}</td>
+                    <td>${escapeHtml(HOLIDAY_REGION_LABEL[region] || region)}</td>
+                    <td class="dash-num-center">${formatHours(p.weeklyHours)} h</td>
+                    <td>${p.isAdmin ? '<span class="admin-role">Admin</span>' : 'Member'}</td>
+                    <td>${status}</td>
+                    <td class="admin-actions">${actions}</td>
+                </tr>`;
+            }).join('');
+
+            container.innerHTML = `
+                <div class="admin-header">
+                    <div>
+                        <h2 class="admin-title">Team members</h2>
+                        <p class="admin-subtitle">New members sign in with their initials and the standard password. Marking someone unavailable keeps all their projects, tasks and hours; they just can no longer sign in or be picked.</p>
+                    </div>
+                    <button type="button" class="btn btn-primary admin-add-btn" onclick="openAdminUserModal()">+ Add member</button>
+                </div>
+                <div class="dashboard-table-container">
+                    <table class="dashboard-table admin-table">
+                        <thead><tr>
+                            <th>Initials</th><th>Name</th><th>Email</th><th>Holidays</th><th>Week</th><th>Role</th><th>Status</th><th>Actions</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
+        }
+
+        function openAdminUserModal() {
+            if (!isCurrentUserAdmin()) return;
+            adminUserForm = { initialsEdited: false, emailEdited: false, created: null };
+            ['adminFirstName', 'adminLastName', 'adminInitials', 'adminEmail'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+            const regionSelect = document.getElementById('adminRegion');
+            if (regionSelect) {
+                regionSelect.innerHTML = Object.keys(HOLIDAYS_BY_REGION)
+                    .map(code => `<option value="${escapeHtml(code)}">${escapeHtml(HOLIDAY_REGION_LABEL[code] || code)}</option>`).join('');
+                regionSelect.value = FALLBACK_HOLIDAY_REGION;
+            }
+            const hours = document.getElementById('adminWeeklyHours');
+            if (hours) hours.value = DEFAULT_WEEKLY_HOURS;
+            const isAdminBox = document.getElementById('adminIsAdmin');
+            if (isAdminBox) isAdminBox.checked = false;
+            setAdminUserModalStep('form');
+            openModal('adminUserModal', '#adminFirstName');
+        }
+
+        function closeAdminUserModal() {
+            closeModal('adminUserModal');
+            adminUserForm = { initialsEdited: false, emailEdited: false, created: null };
+        }
+
+        function setAdminUserModalStep(step) {
+            const form = document.getElementById('adminUserFormStep');
+            const done = document.getElementById('adminUserDoneStep');
+            if (form) form.hidden = step !== 'form';
+            if (done) done.hidden = step !== 'done';
+            const errorEl = document.getElementById('adminUserError');
+            if (errorEl) errorEl.textContent = '';
+        }
+
+        // Vista previa en vivo de iniciales y email mientras se escribe el
+        // nombre, salvo que el admin ya los haya editado a mano.
+        function onAdminNameInput() {
+            const first = document.getElementById('adminFirstName').value;
+            const last = document.getElementById('adminLastName').value;
+            if (!adminUserForm.initialsEdited) document.getElementById('adminInitials').value = generateUserInitials(first, last);
+            if (!adminUserForm.emailEdited) document.getElementById('adminEmail').value = generateUserEmail(first, last);
+            updateAdminInitialsHint();
+        }
+
+        function onAdminInitialsInput() {
+            adminUserForm.initialsEdited = true;
+            const input = document.getElementById('adminInitials');
+            input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+            updateAdminInitialsHint();
+        }
+
+        function onAdminEmailInput() {
+            adminUserForm.emailEdited = true;
+        }
+
+        function updateAdminInitialsHint() {
+            const hint = document.getElementById('adminInitialsHint');
+            if (!hint) return;
+            const initials = normalizeInitials(document.getElementById('adminInitials').value);
+            const { given, surnames } = splitPersonName(
+                document.getElementById('adminFirstName').value,
+                document.getElementById('adminLastName').value);
+            const base = given.length && surnames.length ? (given[0][0] + surnames[0][0]).toUpperCase() : '';
+            if (initials && getTakenInitials().has(initials)) {
+                hint.textContent = `${initials} is already used by someone (current or past). Pick other initials.`;
+            } else if (base && initials && initials !== base) {
+                hint.textContent = `${base} is already taken, so the initial of the second surname (or a number) was added.`;
+            } else {
+                hint.textContent = 'This is the username they will sign in with.';
+            }
+        }
+
+        async function saveAdminUser() {
+            if (!isCurrentUserAdmin()) return;
+            const errorEl = document.getElementById('adminUserError');
+            const firstName = document.getElementById('adminFirstName').value.trim();
+            const lastName = document.getElementById('adminLastName').value.trim();
+            const initials = normalizeInitials(document.getElementById('adminInitials').value);
+            const email = normalizeEmail(document.getElementById('adminEmail').value);
+            const fail = (message, focusId) => {
+                errorEl.textContent = message;
+                const el = document.getElementById(focusId);
+                if (el) el.focus();
+            };
+
+            if (!firstName) return fail('First name is required.', 'adminFirstName');
+            if (!lastName) return fail('Last name is required.', 'adminLastName');
+            if (!/^[A-Z0-9]{2,4}$/.test(initials)) return fail('Initials must be 2 to 4 letters or digits.', 'adminInitials');
+            if (getTakenInitials().has(initials)) return fail(`${initials} is already used by someone (current or past).`, 'adminInitials');
+            if (!email || !email.includes('@')) return fail('Enter a valid email.', 'adminEmail');
+
+            const profile = {
+                initials,
+                email,
+                passwordHash: await getDefaultPasswordHash(),
+                weeklyHours: normalizeWeeklyHours(document.getElementById('adminWeeklyHours').value),
+                holidayRegion: normalizeHolidayRegion(document.getElementById('adminRegion').value),
+                firstName,
+                lastName,
+                isAdmin: !!document.getElementById('adminIsAdmin').checked,
+                isActive: true,
+                deactivatedAt: null,
+                deactivatedBy: ''
+            };
+
+            try {
+                await createAppUser(profile);
+            } catch (error) {
+                return fail(error && error.message ? error.message : 'Could not create the user.', 'adminInitials');
+            }
+
+            adminUserForm.created = profile;
+            document.getElementById('adminCredentials').textContent =
+                `Name: ${firstName} ${lastName}\nUsername: ${initials}\nPassword: ${APP_LOGIN_PASSWORD}`;
+            setAdminUserModalStep('done');
+            // Ya está guardado: cerrar con Escape no debe preguntar por cambios.
+            const modalEl = document.getElementById('adminUserModal');
+            if (modalEl) modalEl.dataset.snapshot = getModalFormSnapshot(modalEl);
+            syncTeamMembersInSelectors();
+            renderActiveView();
+            showToast(`${initials} added to the team`, 'success');
+        }
+
+        async function copyAdminCredentials() {
+            const text = document.getElementById('adminCredentials').textContent;
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast('Credentials copied', 'success');
+            } catch {
+                showToast('Could not copy. Select the text and copy it manually.', 'warning');
+            }
+        }
+
+        async function runAdminUserChange(initials, changes, successMessage) {
+            try {
+                await updateAppUser(initials, changes);
+            } catch (error) {
+                showToast(error && error.message ? error.message : 'Could not update the user.', 'error');
+                return;
+            }
+            syncTeamMembersInSelectors();
+            renderActiveView();
+            showToast(successMessage, 'success');
+        }
+
+        async function deactivateUser(initials) {
+            const key = normalizeInitials(initials);
+            if (!isCurrentUserAdmin() || key === normalizeInitials(currentUser)) return;
+            const { liveProjects, openTasks } = getMemberWorkSummary(key);
+            const ok = confirm(`Mark ${key} as unavailable?\n\n` +
+                `${liveProjects} project(s) and ${openTasks} open task(s) list ${key}. They will keep showing ${key} (greyed out) so the team can review the work, ` +
+                `but ${key} can no longer sign in, be picked as owner or assignee, or appear in the Team calendar.`);
+            if (!ok) return;
+            await runAdminUserChange(key, {
+                isActive: false,
+                deactivatedAt: new Date().toISOString(),
+                deactivatedBy: normalizeInitials(currentUser)
+            }, `${key} is now unavailable`);
+        }
+
+        async function reactivateUser(initials) {
+            const key = normalizeInitials(initials);
+            if (!isCurrentUserAdmin()) return;
+            await runAdminUserChange(key, { isActive: true, deactivatedAt: null, deactivatedBy: '' }, `${key} is active again`);
+        }
+
+        async function resetUserPassword(initials) {
+            const key = normalizeInitials(initials);
+            if (!isCurrentUserAdmin()) return;
+            if (!confirm(`Reset the password of ${key} to the standard one (${APP_LOGIN_PASSWORD})?`)) return;
+            await runAdminUserChange(key, { passwordHash: await getDefaultPasswordHash() }, `Password of ${key} reset`);
+        }
+
+        async function toggleAdminRole(initials) {
+            const key = normalizeInitials(initials);
+            const profile = userDirectory[key];
+            if (!isCurrentUserAdmin() || !profile || key === normalizeInitials(currentUser)) return;
+            await runAdminUserChange(key, { isAdmin: !profile.isAdmin }, profile.isAdmin ? `${key} is no longer an admin` : `${key} is now an admin`);
+        }
+
         function clearLoginSession() {
             try {
                 localStorage.removeItem(APP_LOGIN_STORAGE_KEY);
@@ -8206,13 +8966,21 @@ function sortDailyProjects(projects) {
         async function init() {
             await loadUserDirectory();
 
+            // Una sesión guardada de alguien que ya no está activo (dado de
+            // baja, o que cambió sus iniciales en otro navegador) se cierra.
+            const sessionUser = normalizeInitials(localStorage.getItem(APP_CURRENT_USER_STORAGE_KEY) || currentUser);
+            if (sessionUser && userDirectory[sessionUser] && !isMemberActive(sessionUser)) {
+                logoutCurrentUser();
+                return;
+            }
+
             const savedUser = normalizeInitials(localStorage.getItem(APP_CURRENT_USER_STORAGE_KEY));
-            if (savedUser && userDirectory[savedUser]) {
+            if (savedUser && isMemberActive(savedUser)) {
                 currentUser = savedUser;
-            } else if (currentUser && userDirectory[currentUser]) {
+            } else if (currentUser && isMemberActive(currentUser)) {
                 // Mantener el usuario fijado por la sesión válida.
             } else {
-                currentUser = Object.keys(userDirectory).sort()[0] || 'IS';
+                currentUser = teamMembers.slice().sort()[0] || 'IS';
             }
 
             localStorage.setItem(APP_CURRENT_USER_STORAGE_KEY, currentUser);
@@ -8220,6 +8988,7 @@ function sortDailyProjects(projects) {
             // 2. ACTUALIZAR INTERFAZ CON EL USUARIO CARGADO
             updateUserDisplay();
             syncTeamMembersInSelectors();
+            syncAdminNavButton();
 
             syncPhaseSelectors();
 
@@ -8318,6 +9087,12 @@ function sortDailyProjects(projects) {
                 const profile = userDirectory[enteredInitials];
                 if (!profile) {
                     loginError.textContent = 'User not found.';
+                    initialsInput.focus();
+                    initialsInput.select();
+                    return;
+                }
+                if (profile.isActive === false) {
+                    loginError.textContent = 'This account is no longer active. Contact an admin.';
                     initialsInput.focus();
                     initialsInput.select();
                     return;

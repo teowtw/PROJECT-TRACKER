@@ -96,6 +96,44 @@ window.__shotLoaded = true;
             note: 'training week', created_by: 'TB', updated_at: new Date().toISOString()
         });
 
+        // Noviembre 2026: un proyecto Training con dos formaciones (verde),
+        // savings en horas, admins y una persona dada de baja.
+        const people = { TB: ['Teo', 'Balsalobre'], AR: ['Ana', 'Real'], JG: ['Jorge', 'Gazulla'], IM: ['Inês', 'Marcelino'], AD: ['Abha', 'Dungdung'] };
+        window.__DB.app_users.forEach(u => {
+            u.first_name = people[u.initials][0]; u.last_name = people[u.initials][1];
+            u.is_admin = u.initials === 'TB' || u.initials === 'AR'; u.is_active = true;
+        });
+        window.__DB.app_users.push({ initials: 'MP', email: 'marta.perez@wtwco.com', password_hash: 'x', weekly_hours: 40,
+            first_name: 'Marta', last_name: 'Pérez', is_admin: false, is_active: false,
+            deactivated_at: '2026-10-01T10:00:00Z', deactivated_by: 'AR' });
+        window.__DB.projects.find(p => p.id === 'p1').savings_hours = 1500;
+        window.__DB.projects.find(p => p.id === 'p2').responsibles = ['JG', 'IM', 'MP'];
+        window.__DB.projects.push({
+            id: 'pT', name: "Teo's Training", start_date: null, end_date: null, phase: 'Training',
+            bau_owner: null, stakeholders: '', benefits: '', description: 'Courses and certifications', country: '',
+            volume: 0, fte: 0, savings_hours: null, priority: 'Media', impact: 'Medio', status: 'Verde',
+            progress: 0, prerequisites: [], responsibles: ['TB'], created_at: '2026-10-01T00:00:00Z'
+        });
+        [['tr1', 1, 'PL-900 Power Platform course', 4], ['tr2', 3, 'Copilot Studio workshop', 2]].forEach(([id, offset, text, hours]) => {
+            window.__DB.daily_comments.push({ id, project_id: 'pT', date: dayKey(offset), time: '15:00', text,
+                description: '', responsible: 'TB', responsibles: ['TB'], estimated_hours: hours, hours_by_assignee: {},
+                urgency: 'Normal', has_incident: false, completed: false, task_type: 'training', is_personal: false,
+                owner_initials: 'TB', user_name: 'TB', parent_id: null, created_at: new Date().toISOString() });
+        });
+        // Medio día: mañana de vacaciones (TB) y tarde de baja (JG).
+        window.__DB.team_vacations.push(
+            { id: 'hv1', user_initials: 'TB', start_date: dayKey(1), end_date: dayKey(1), status: 'planned', vacation_type: 'current_year', absence_type: 'vacation', vacation_year: new Date().getFullYear(), days_count: 1, day_portion: 'am' },
+            { id: 'hv2', user_initials: 'JG', start_date: dayKey(3), end_date: dayKey(3), status: 'planned', vacation_type: 'not_charged', absence_type: 'sick_leave', vacation_year: new Date().getFullYear(), days_count: 1, day_portion: 'pm' },
+            { id: 'hv3', user_initials: 'IM', start_date: dayKey(2), end_date: dayKey(2), status: 'planned', vacation_type: 'current_year', absence_type: 'vacation', vacation_year: new Date().getFullYear(), days_count: 1 },
+            // Semana del 9-nov (la que abre la escena #team).
+            { id: 'hv4', user_initials: 'TB', start_date: '2026-11-10', end_date: '2026-11-10', status: 'planned', vacation_type: 'current_year', absence_type: 'vacation', vacation_year: 2026, days_count: 1, day_portion: 'am' },
+            { id: 'hv5', user_initials: 'AD', start_date: '2026-11-12', end_date: '2026-11-12', status: 'planned', vacation_type: 'not_charged', absence_type: 'sick_leave', vacation_year: 2026, days_count: 1, day_portion: 'pm' },
+            { id: 'hv6', user_initials: 'IM', start_date: '2026-11-11', end_date: '2026-11-11', status: 'planned', vacation_type: 'current_year', absence_type: 'vacation', vacation_year: 2026, days_count: 1, day_portion: 'pm' }
+        );
+        await loadTeamVacations();
+        await loadUserDirectory(true);
+        syncAdminNavButton();
+
         await loadDataFromSupabase(true);
         currentProjectId = 'p1';
         await sleep(60);
@@ -176,6 +214,40 @@ window.__shotLoaded = true;
                 await sleep(60);
                 openTaskEditor('mt2');
             }
+        } else if (scene === 'daily') {
+            switchView('daily');
+        } else if (scene === 'dailyscroll') {
+            // Muchos proyectos: cabecera fija de Daily y scroll del menú.
+            for (let i = 0; i < 25; i++) {
+                window.__DB.projects.push({ id: 'bulk' + i, name: 'Automation stream ' + (i + 1), phase: 'Development',
+                    status: 'Verde', priority: 'Media', impact: 'Medio', progress: 0, prerequisites: [],
+                    responsibles: ['TB'], created_at: '2026-01-01T00:00:00Z' });
+            }
+            await loadDataFromSupabase(true);
+            switchView('daily');
+            await sleep(80);
+            document.getElementById('dailyTableContainer').scrollTop = 520;
+            document.querySelector('.sidebar-content').scrollTop = 200;
+        } else if (scene === 'status') {
+            currentProjectId = 'p1';
+            switchView('ficha');
+            await sleep(60);
+            toggleIndicatorDropdown(new Event('click'), 'status');
+        } else if (scene === 'training') {
+            currentProjectId = 'pT';
+            switchView('ficha');
+        } else if (scene === 'admin' || scene === 'adduser') {
+            switchView('admin');
+            if (scene === 'adduser') {
+                openAdminUserModal();
+                document.getElementById('adminFirstName').value = 'Ana';
+                document.getElementById('adminLastName').value = 'Rodríguez Gil';
+                onAdminNameInput();
+            }
+        } else if (scene === 'newtraining') {
+            openNewProjectModal();
+            document.getElementById('projectPhase').value = 'Training';
+            onNewProjectPhaseChange();
         } else if (scene === 'bin') {
             sidebarCollapsed.archivados = false;
             sidebarCollapsed.eliminados = false;

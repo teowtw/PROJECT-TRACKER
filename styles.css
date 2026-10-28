@@ -127,6 +127,11 @@
     --color-accent-green-soft: #E4F5EC;
     --color-accent-pink: #c23d63;
     --color-accent-pink-soft: #ffe8ee;
+    /* Training: el ÚNICO verde de Daily y Tasks. Fondo suave, borde y
+       texto de badge con contraste AA sobre el fondo suave. */
+    --color-training: #15803D;
+    --color-training-soft: #DCFCE7;
+    --color-training-text: #14532D;
     --color-input-bg: #FBFAFD;
     --color-focus-ring: rgba(100, 44, 153, 0.22);
     --shadow-btn-primary: 0 8px 20px rgba(100, 44, 153, 0.22);
@@ -218,6 +223,9 @@ html[data-theme="dark"] {
     --color-accent-green-soft: rgba(63, 192, 136, 0.14);
     --color-accent-pink: #f472b6;
     --color-accent-pink-soft: rgba(244, 114, 182, 0.14);
+    --color-training: #4ADE80;
+    --color-training-soft: rgba(74, 222, 128, 0.16);
+    --color-training-text: #86EFAC;
     --color-input-bg: #251D32;
     --color-focus-ring: rgba(178, 132, 230, 0.32);
     --shadow-btn-primary: 0 8px 24px rgba(178, 132, 230, 0.22);
@@ -519,17 +527,49 @@ button:disabled {
     color: var(--color-ink);
 }
 
+/* Barra de scroll del menú: una línea fina y clara sobre el morado que
+   se ensancha al pasar el ratón por el menú, para poder arrastrarla.
+   El ancho de la pista es fijo (10px); lo que cambia es el borde
+   transparente del thumb (background-clip), así el contenido no salta.
+   Se aparca en el padding derecho del sidebar (margin/padding -12/12)
+   para no comerse ancho de los nombres de proyecto.
+   OJO: no usar scrollbar-width/scrollbar-color aquí: en Chromium
+   anulan los estilos ::-webkit-scrollbar. */
 .sidebar-content {
     flex: 1;
     overflow-y: auto;
     margin-bottom: 10px;
-    /* Ocultar scrollbar */
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+    margin-right: -12px;
+    padding-right: 12px;
 }
 
 .sidebar-content::-webkit-scrollbar {
-    display: none;
+    width: 10px;
+}
+
+.sidebar-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.32);
+    border-radius: 999px;
+    border: 4px solid transparent;
+    background-clip: padding-box;
+    min-height: 32px;
+}
+
+.sidebar-content:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.5);
+    border-width: 2px;
+    background-clip: padding-box;
+}
+
+.sidebar-content::-webkit-scrollbar-thumb:hover,
+.sidebar-content::-webkit-scrollbar-thumb:active {
+    background: rgba(255, 255, 255, 0.75);
+    border-width: 1px;
+    background-clip: padding-box;
 }
 
 .sidebar-list {
@@ -1110,8 +1150,13 @@ button:disabled {
 }
 
 .legend-swatch--personal {
-    background: var(--color-accent-green-soft);
-    border-left: 3px solid var(--color-accent-green);
+    background: var(--color-accent-blue-soft);
+    border-left: 3px solid var(--color-accent-blue);
+}
+
+.legend-swatch--training {
+    background: var(--color-training-soft);
+    border-left: 3px solid var(--color-training);
 }
 
 .legend-swatch--current {
@@ -1565,14 +1610,21 @@ button:disabled {
     border-left: 3px solid var(--color-accent-amber);
 }
 
+/* Personal pendiente: azul. Antes era verde, pero el verde en Daily
+   queda reservado a las tareas de training. */
 .daily-table td.daily-cell.has-comment-personal {
-    background: var(--color-accent-green-soft);
-    border-left: 3px solid var(--color-accent-green);
+    background: var(--color-accent-blue-soft);
+    border-left: 3px solid var(--color-accent-blue);
 }
 
 .daily-table td.daily-cell.has-comment-mixed {
-    background: linear-gradient(135deg, var(--color-accent-amber-soft) 0%, var(--color-accent-amber-soft) 49%, var(--color-accent-green-soft) 51%, var(--color-accent-green-soft) 100%);
+    background: linear-gradient(135deg, var(--color-accent-amber-soft) 0%, var(--color-accent-amber-soft) 49%, var(--color-accent-blue-soft) 51%, var(--color-accent-blue-soft) 100%);
     border-left: 3px solid #d0b46c;
+}
+
+.daily-table td.daily-cell.has-training {
+    background: var(--color-training-soft);
+    border-left: 3px solid var(--color-training);
 }
 
 .holiday-cell {
@@ -2094,9 +2146,10 @@ button:disabled {
     justify-content: flex-start;
 }
 
+/* Azul y no verde: el verde se reserva a training */
 .completion-badge--private {
-    background: #e4fff1;
-    color: #17663a;
+    background: var(--color-accent-blue-soft);
+    color: #1D4F7C;
 }
 
 /* ── Hilo de respuestas ── */
@@ -6001,6 +6054,7 @@ button:disabled {
 .status-dot--verde,
 .dash-dot--verde { background: var(--color-positive); }
 .status-dot--ámbar,
+.status-dot--ambar,
 .dash-dot--ambar { background: var(--color-attention); }
 .status-dot--rojo,
 .dash-dot--rojo { background: var(--color-negative); }
@@ -6262,8 +6316,8 @@ html[data-theme="dark"] .comment-action-btn--danger:hover {
 }
 
 html[data-theme="dark"] .completion-badge--private {
-    background: var(--color-positive-soft);
-    color: var(--color-positive);
+    background: var(--color-accent-blue-soft);
+    color: var(--color-accent-blue);
 }
 
 html[data-theme="dark"] .reply-textarea {
@@ -7641,4 +7695,372 @@ button.my-task-title:hover {
     font-size: 13px;
     font-weight: 400;
     color: var(--color-text);
+}
+
+/* =====================================================
+   TRAINING
+   Proyectos de fase Training y tareas con task_type = training.
+   Siempre color + texto ("TRAINING"): el color solo no basta (WCAG 1.4.1).
+   ===================================================== */
+.training-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--color-training);
+    background: var(--color-training-soft);
+    color: var(--color-training-text);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.daily-group-row--training td {
+    background: var(--color-training-soft);
+    border-top-color: var(--color-training);
+}
+
+/* Sobre el fondo verde, el morado del enlace y el gris secundario bajan
+   de 4.5:1 (sobre todo en oscuro): se usa el texto de training. */
+.daily-group-row--training .daily-group-toggle {
+    color: var(--color-training-text);
+}
+
+.is-training .day-task-author,
+.is-training .day-personal-delete,
+.is-training .my-task-desc,
+.is-training .comment-meta {
+    color: var(--color-text);
+}
+
+.daily-table tr.training-row td.project-name-cell {
+    box-shadow: inset 3px 0 0 var(--color-training);
+}
+
+.day-task-item.is-training,
+.my-task.is-training,
+.comment-entry.is-training {
+    background: var(--color-training-soft);
+}
+
+.my-task.is-training {
+    border-color: var(--color-training);
+}
+
+.comment-entry.is-training {
+    border-left-color: var(--color-training);
+}
+
+.training-check .form-label-optional {
+    margin-left: 4px;
+    color: inherit;
+}
+
+.ficha-field--wide {
+    grid-column: 1 / -1;
+}
+
+.training-hours-total {
+    font-size: 18px;
+    font-weight: 700;
+    margin-right: 8px;
+    color: var(--color-training-text);
+}
+
+.ficha-legacy-hint {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+}
+
+.phase-color-training { fill: var(--color-training); stroke: var(--color-training); background: var(--color-training); }
+
+/* =====================================================
+   VISTA ADMIN (gestión de usuarios)
+   ===================================================== */
+.view-toggle button[hidden] {
+    display: none;
+}
+
+.admin-view {
+    display: none;
+    max-width: 1200px;
+}
+
+.admin-view.active {
+    display: block;
+}
+
+.admin-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.admin-title {
+    margin: 0 0 4px;
+    font-size: 18px;
+}
+
+.admin-subtitle {
+    margin: 0;
+    max-width: 720px;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+}
+
+.btn.admin-add-btn {
+    flex: 0 0 auto;
+    padding: 9px 18px;
+}
+
+.admin-table td {
+    vertical-align: middle;
+}
+
+.admin-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.admin-muted {
+    color: var(--color-text-secondary);
+    font-weight: 400;
+}
+
+.admin-role {
+    font-weight: 700;
+    color: var(--color-accent-text);
+}
+
+.admin-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.admin-status--active {
+    background: var(--color-accent-blue-soft);
+    color: var(--color-text);
+}
+
+.admin-status--off {
+    background: var(--color-well);
+    color: var(--color-text-secondary);
+}
+
+.admin-row--off td {
+    color: var(--color-text-secondary);
+}
+
+.admin-credentials {
+    margin: 12px 0;
+    padding: 12px 14px;
+    border-radius: var(--radius-input);
+    border: 1px solid var(--color-border);
+    background: var(--color-well);
+    color: var(--color-text);
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    user-select: all;
+}
+
+/* Personas dadas de baja (o iniciales antiguas): en gris y con borde
+   discontinuo. Sin tachar, porque su trabajo sigue siendo válido, y sin
+   opacidad, que bajaría el contraste del texto por debajo de AA. */
+[data-unavailable="true"] {
+    background: var(--color-well) !important;
+    color: var(--color-text-secondary) !important;
+    border: 1px dashed var(--color-text-secondary) !important;
+}
+
+.owner-picker-btn[data-unavailable="true"]::after,
+.resp-popover-btn[data-unavailable="true"]::after {
+    content: " · unavailable";
+    font-size: 10px;
+}
+
+/* Un proyecto Training no tiene progreso: el contenedor lleva [hidden],
+   que su display:flex anularía. */
+.progress-indicator-centered[hidden] {
+    display: none;
+}
+
+/* =====================================================
+   ESTADOS DE PROYECTO NUEVOS (On Hold, Cancelled, Done)
+   Los de salud (verde/ámbar/rojo) siguen arriba. Estos son de
+   situación: tonos neutros y morado, sin competir con los de salud.
+   ===================================================== */
+.status-badge.status-pausa,
+.badge-status.badge-pausa {
+    background: var(--color-neutral-soft);
+    color: var(--color-text-secondary);
+    border-color: var(--color-neutral);
+}
+
+.status-badge.status-cancelado,
+.badge-status.badge-cancelado {
+    background: var(--color-well);
+    color: var(--color-text-secondary);
+    border-color: var(--color-text-secondary);
+}
+
+.status-badge.status-completado,
+.badge-status.badge-completado {
+    background: var(--color-accent-purple-soft);
+    color: var(--color-accent-text);
+    border-color: var(--color-accent-purple);
+}
+
+.status-dot--pausa,
+.dash-dot--pausa { background: var(--color-neutral); }
+.status-dot--cancelado,
+.dash-dot--cancelado { background: var(--color-text-secondary); }
+.status-dot--completado,
+.dash-dot--completado { background: var(--color-accent-purple); }
+
+.dash-pill--pausa.active {
+    background: var(--color-text-secondary);
+    border-color: var(--color-text-secondary);
+}
+
+.dash-pill--cancelado.active {
+    background: var(--color-text-secondary);
+    border-color: var(--color-text-secondary);
+}
+
+.dash-pill--completado.active {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+}
+
+/* =====================================================
+   DAILY: CABECERA FIJA (como "inmovilizar fila" en Excel)
+   La tabla hace scroll dentro de #dailyTableContainer, que ocupa el
+   alto que queda en la vista; así la cabecera (Project · Status ·
+   Start date · días) y la fila de filtros se quedan arriba.
+   - .daily-table pasa de overflow:hidden a overflow:clip: recorta igual
+     las esquinas redondeadas pero NO crea contenedor de scroll, que
+     es lo que rompía el sticky.
+   - Solo escritorio: en móvil ya hay una columna fija a la izquierda y
+     el scroll es el de la página.
+   ===================================================== */
+@media (min-width: 769px) {
+    .content-area:has(> .daily-view.active) {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .daily-view.active {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    #dailyTableContainer {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        border-radius: var(--radius-card);
+    }
+
+    .daily-table {
+        overflow: clip;
+    }
+
+    .daily-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        /* Con border-collapse los bordes de la cabecera no viajan con
+           ella: una sombra marca el corte con las filas que pasan por
+           debajo. */
+        box-shadow: 0 2px 0 var(--color-border), 0 6px 12px -8px rgba(0, 0, 0, 0.35);
+    }
+}
+
+/* =====================================================
+   MEDIO DÍA DE AUSENCIA (team_vacations.day_portion)
+   La celda del calendario se parte en diagonal: triángulo de arriba a
+   la izquierda = mañana; de abajo a la derecha = tarde.
+   Las celdas vacías no tienen fondo propio (se ve el de la tarjeta), así
+   que no se "tapa" media celda: la celda de medio día se queda sin fondo
+   y un ::after pinta SOLO el triángulo con el relleno de su tipo, que
+   cada clase de ausencia publica en --leave-fill.
+   ===================================================== */
+.calendar-table tbody td.vacation-current-year { --leave-fill: var(--color-accent-blue); }
+.calendar-table tbody td.vacation-previous-year { --leave-fill: var(--color-accent-purple); }
+.calendar-table tbody td.vacation-willis-choice { --leave-fill: var(--color-accent-amber); }
+.calendar-table tbody td.vacation-next-year { --leave-fill: var(--color-accent-green); }
+.calendar-table tbody td.absence-other {
+    --leave-fill: repeating-linear-gradient(135deg,
+        var(--color-neutral) 0 3px,
+        var(--color-neutral-soft) 3px 6px);
+}
+
+.calendar-table tbody td.leave-half {
+    position: relative;
+    background: transparent !important;
+}
+
+.calendar-table tbody td.leave-half::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--leave-fill);
+    pointer-events: none;
+}
+
+.calendar-table tbody td.leave-half--am::after {
+    clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.calendar-table tbody td.leave-half--pm::after {
+    clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+/* Si el medio día cae en un día marcado (seleccionado, hoy), esos estilos
+   siguen visibles porque solo se anula el fondo, no los bordes. */
+
+/* Iniciales en la cabecera de Daily: borde discontinuo = medio día */
+.vacation-badge--half {
+    outline: 1px dashed var(--color-accent-purple);
+    outline-offset: 1px;
+}
+
+.leave-portion {
+    border: none;
+    padding: 0;
+    margin: 0 0 14px;
+}
+
+.leave-portion-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+}
+
+.form-group.leave-portion .checkbox-label {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--color-text);
+}
+
+.form-group.leave-portion .checkbox-label:has(input:disabled) {
+    color: var(--color-text-secondary);
+}
+
+.legend-swatch--half {
+    background: linear-gradient(135deg, var(--color-accent-blue) 0 50%, var(--color-surface) 50% 100%);
 }

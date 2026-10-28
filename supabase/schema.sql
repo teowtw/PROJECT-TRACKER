@@ -31,6 +31,12 @@
 --   5. migrations_tasks_absences_regions.sql  (tipos de ausencia y
 --      "next year", región de festivos, vista Tasks: prioridad,
 --      esfuerzo, hora, visibilidad y fecha opcional en day_tasks)
+--   6. migrations_training_hours_admin.sql  (fase Training, estados
+--      On Hold/Cancelled/Done, real_fte, task_type
+--      standard/training, savings_hours, admins y baja lógica en
+--      app_users)
+--   7. migrations_half_day_leave.sql  (team_vacations.day_portion:
+--      medio día de ausencia, mañana o tarde)
 -- Y después seed.sql. Para comprobar producción, consulta el esquema
 -- vivo (information_schema / pg_constraint): no te fíes de este fichero
 -- (ver la skill supabase-safe-migration).

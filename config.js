@@ -20,7 +20,11 @@ const STANDARD_PREREQUISITES = [
 // Project lifecycle phases. Order defines the order in tables and selectors.
 // BAU = the project has finished and our team keeps the maintenance.
 // If another team owns the BAU, the project moves from Hypercare to Completed/Cancelled.
-const PROJECT_PHASES = ['Discovery', 'Design', 'Development', 'Testing', 'Pilot', 'Production', 'Hypercare', 'BAU', 'Completed', 'Cancelled', 'On Hold'];
+// Training = proyecto personal de formación ("Teo's Training"): no es
+// parte del portfolio, solo sirve para registrar horas de formación.
+// Va al final para no alterar el orden por fase de los demás.
+const TRAINING_PHASE = 'Training';
+const PROJECT_PHASES = ['Discovery', 'Design', 'Development', 'Testing', 'Pilot', 'Production', 'Hypercare', 'BAU', 'Completed', 'Cancelled', 'On Hold', TRAINING_PHASE];
 
 // Who owns the BAU once the project has finished
 const BAU_OWNERS = [

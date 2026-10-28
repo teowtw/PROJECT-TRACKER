@@ -208,6 +208,28 @@ window.__auditLoaded = true;
                 status: 'planned', vacation_type, absence_type, vacation_year: new Date().getFullYear(), days_count: 1
             });
         });
+        // Training (green), a personal pending task (blue), admins and an
+        // unavailable member, so the November 2026 styles are audited too.
+        window.__DB.app_users.forEach(u => { u.is_admin = u.initials === 'TB'; u.is_active = true; u.first_name = u.initials; u.last_name = 'Sample'; });
+        window.__DB.app_users.push({ initials: 'XX', email: 'xx@wtwco.com', password_hash: 'x', weekly_hours: 40,
+            first_name: 'Xavier', last_name: 'Xu', is_admin: false, is_active: false, deactivated_at: '2026-10-01T00:00:00Z' });
+        window.__DB.projects.push({ id: 'pT', name: "TB's Training", phase: 'Training', responsibles: ['TB', 'XX'],
+            prerequisites: [], priority: 'Media', impact: 'Medio', status: 'Verde', progress: 0, created_at: new Date().toISOString() });
+        window.__DB.daily_comments.push({
+            id: 'cT', project_id: 'pT', parent_id: null, date: formatDateKey(new Date()), time: '11:00',
+            text: 'Course: Power BI', responsible: 'TB', responsibles: ['TB'], is_personal: false, owner_initials: 'TB',
+            user_name: 'TB', urgency: 'Normal', has_incident: false, completed: false, task_type: 'training',
+            estimated_hours: 3, created_at: new Date().toISOString()
+        }, {
+            id: 'cP', project_id: 'p1', parent_id: null, date: (() => { const d = getMonday(new Date()); d.setDate(d.getDate() + 4); return formatDateKey(d); })(),
+            time: '12:00', text: 'Personal reminder', responsible: 'TB', responsibles: ['TB'], is_personal: true,
+            owner_initials: 'TB', user_name: 'TB', urgency: 'Normal', has_incident: false, completed: false, created_at: new Date().toISOString()
+        });
+        window.__DB.day_tasks.push({ id: 'atT', task_date: formatDateKey(new Date()), text: 'Training sample', project_id: 'pT',
+            assignees: ['TB'], created_by: 'TB', completed: false, estimated_hours: 1, hours_by_assignee: {}, priority: 'Media',
+            visibility: 'team', task_type: 'training', created_at: new Date().toISOString() });
+        await loadUserDirectory(true);
+        syncAdminNavButton();
         await loadTeamVacations();
         await loadDataFromSupabase(true);
 
@@ -320,6 +342,23 @@ window.__auditLoaded = true;
                 closeProjectMenu();
                 await sleep(30);
             }
+
+            currentProjectId = 'pT';
+            switchView('ficha');
+            await sleep(60);
+            audit(theme + ' / Training card (unavailable owner)');
+
+            switchView('admin');
+            await sleep(40);
+            audit(theme + ' / Admin view');
+            openAdminUserModal();
+            document.getElementById('adminFirstName').value = 'Laura';
+            document.getElementById('adminLastName').value = 'Gomez Ruiz';
+            onAdminNameInput();
+            await sleep(30);
+            audit(theme + ' / Add member modal');
+            closeAdminUserModal();
+            await sleep(30);
 
             switchView('daily');
             await sleep(30);
