@@ -16,6 +16,24 @@
 --     Supabase Auth, usa su propio login JS contra app_users, así
 --     que la seguridad a nivel de Postgres se deja abierta a
 --     propósito. No la endurezcas aquí.
+--
+-- OJO, ESTE FICHERO ES LA BASE, NO EL ESTADO ACTUAL DE PRODUCCIÓN.
+-- Producción ha ido evolucionando con migraciones aditivas. En un
+-- proyecto Supabase nuevo, después de este fichero ejecuta, EN ESTE
+-- ORDEN (todas son idempotentes):
+--   1. migrations_description_country_priority.sql  (fases en inglés,
+--      prioridad Crítica, description/country; corrige el CHECK de
+--      projects.phase que aquí sigue con el vocabulario antiguo)
+--   2. migrations_weekly_incidents.sql
+--   3. migrations_day_tasks.sql
+--   4. migrations_capacity_tasks_archive.sql  (horas, archivado/papelera,
+--      overrides de capacidad)
+--   5. migrations_tasks_absences_regions.sql  (tipos de ausencia y
+--      "next year", región de festivos, vista Tasks: prioridad,
+--      esfuerzo, hora, visibilidad y fecha opcional en day_tasks)
+-- Y después seed.sql. Para comprobar producción, consulta el esquema
+-- vivo (information_schema / pg_constraint): no te fíes de este fichero
+-- (ver la skill supabase-safe-migration).
 -- =====================================================
 
 -- Necesario para gen_random_uuid()

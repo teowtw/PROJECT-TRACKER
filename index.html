@@ -15,7 +15,7 @@
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-	<link rel="stylesheet" href="styles.css?v=20261019">
+	<link rel="stylesheet" href="styles.css?v=20261028">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.js"></script>
 </head>
 <body>
@@ -44,7 +44,16 @@
             <div class="sidebar-subtitle">WE AI IMPLEMENTATION ANALYSTS</div>
             <button type="button" class="btn-new-project" onclick="openNewProjectModal()"><span class="btn-new-project-icon" aria-hidden="true">+</span> New Project</button>
 
+            <div class="sidebar-search" role="search">
+                <svg class="sidebar-search-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <label class="visually-hidden" for="sidebarProjectSearch">Search projects</label>
+                <input type="search" id="sidebarProjectSearch" class="sidebar-search-input" placeholder="Search projects…  ( / )" autocomplete="off" spellcheck="false"
+                       oninput="setSidebarSearch(this.value)" onkeydown="handleSidebarSearchKey(event)">
+                <span class="sidebar-search-status visually-hidden" id="sidebarSearchStatus" role="status" aria-live="polite"></span>
+            </div>
+
             <div class="sidebar-content">
+                <p class="sidebar-search-empty" id="sidebarSearchEmpty" hidden></p>
                 <button type="button" class="sidebar-title" id="sidebarTitleActivos" aria-expanded="true" aria-controls="projectsListActive" onclick="toggleSidebarSection('activos')">
                     <span class="section-toggle-icon" data-collapsed="false" aria-hidden="true"></span>Active
                 </button>
@@ -91,10 +100,18 @@
                     <h2 id="viewTitle">Daily</h2>
                 </div>
                 <div class="view-toggle" role="group" aria-label="Views">
-                    <button type="button" class="active" data-view="daily" aria-pressed="true" onclick="switchView('daily')"><span class="view-ico" aria-hidden="true">◷</span> Daily</button>
-                    <button type="button" data-view="ficha" aria-pressed="false" onclick="switchView('ficha')"><span class="view-ico" aria-hidden="true">❏</span> Project Details</button>
-                    <button type="button" data-view="equipo" aria-pressed="false" onclick="switchView('equipo')"><span class="view-ico" aria-hidden="true">◎</span> Team</button>
-                    <button type="button" data-view="dashboard" aria-pressed="false" onclick="switchView('dashboard')"><span class="view-ico" aria-hidden="true">▚</span> Dashboard</button>
+                    <!-- Iconos SVG de trazo (currentColor): se ven igual en cualquier
+                         sistema, a diferencia de los glifos Unicode, y siguen el tema. -->
+                    <button type="button" class="active" data-view="daily" aria-pressed="true" onclick="switchView('daily')" title="Daily: the team's week, day by day">
+                        <svg class="view-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="m9 15 2 2 4-4"/></svg> Daily</button>
+                    <button type="button" data-view="tasks" aria-pressed="false" onclick="switchView('tasks')" title="Tasks: everything assigned to you, with or without a project">
+                        <svg class="view-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 6.5 1.6 1.6L8.5 5M4 12.5l1.6 1.6 2.9-3.1M4 18.5l1.6 1.6 2.9-3.1"/><path d="M12 7h8M12 13h8M12 19h8"/></svg> Tasks<span class="view-count" id="tasksViewCount" aria-label="pending tasks"></span></button>
+                    <button type="button" data-view="ficha" aria-pressed="false" onclick="switchView('ficha')" title="Project Details: the card of the selected project">
+                        <svg class="view-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 13.5h8M8 16.5h5"/></svg> Project Details</button>
+                    <button type="button" data-view="equipo" aria-pressed="false" onclick="switchView('equipo')" title="Team: leave and public holiday calendar">
+                        <svg class="view-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M15.5 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg> Team</button>
+                    <button type="button" data-view="dashboard" aria-pressed="false" onclick="switchView('dashboard')" title="Dashboard: portfolio figures and team allocation">
+                        <svg class="view-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5h18"/><rect x="5" y="11" width="3.2" height="6.5" rx="1"/><rect x="10.4" y="5.5" width="3.2" height="12" rx="1"/><rect x="15.8" y="13.5" width="3.2" height="4" rx="1"/></svg> Dashboard</button>
                 </div>
             </div>
 
@@ -134,11 +151,82 @@
 
                 <!-- VISTA EQUIPO -->
                 <div class="team-view" id="teamView" data-view="equipo"></div>
+                <!-- VISTA TAREAS: solo las del usuario conectado -->
+                <div class="tasks-view" id="tasksView" data-view="tasks"></div>
 				<div class="dashboard-view" id="dashboardView" data-view="dashboard"></div>
             </div>
         </div>
     </div>
     <button class="sidebar-backdrop" id="sidebarBackdrop" type="button" aria-label="Close projects menu" onclick="closeMobileSidebar()"></button>
+
+    <!-- Crear / editar una tarea de la vista Tasks (tabla day_tasks) -->
+    <div class="modal" id="taskEditorModal" data-dirty-check>
+        <div class="modal-content modal-task-editor" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="taskEditorTitle">
+            <div class="modal-title" id="taskEditorTitle">New Task</div>
+            <div class="form-group">
+                <label for="taskEditorText">Title <span class="required-mark" aria-hidden="true">*</span></label>
+                <input type="text" id="taskEditorText" maxlength="300" placeholder="What needs doing..." required autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="taskEditorDescription">Description <span class="form-label-optional">optional</span></label>
+                <textarea id="taskEditorDescription" placeholder="Context, links, acceptance criteria..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="taskEditorProject">Associated project <span class="form-label-optional">optional</span></label>
+                <select id="taskEditorProject"></select>
+                <p class="form-hint">Without a project, the task only appears in Tasks (and in Daily if it has a date).</p>
+            </div>
+            <div class="task-editor-grid">
+                <div class="form-group">
+                    <label for="taskEditorPriority">Priority</label>
+                    <select id="taskEditorPriority">
+                        <option value="Baja">Low</option>
+                        <option value="Media">Medium</option>
+                        <option value="Alta">High</option>
+                        <option value="Crítica">Critical</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="taskEditorEffort">Effort</label>
+                    <select id="taskEditorEffort">
+                        <option value="">Not set</option>
+                        <option value="Bajo">Low</option>
+                        <option value="Medio">Medium</option>
+                        <option value="Alto">High</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="taskEditorHours">Estimated hours</label>
+                    <input type="number" id="taskEditorHours" min="0" max="1000" step="0.5" placeholder="e.g.: 4">
+                </div>
+            </div>
+            <div class="form-group">
+                <label id="taskEditorAssigneesLabel">People</label>
+                <div id="taskEditorAssignees" class="owner-picker" role="group" aria-labelledby="taskEditorAssigneesLabel"></div>
+                <p class="form-hint">The task appears in the Tasks view of everyone you add. Hours are split between them.</p>
+            </div>
+            <div class="task-editor-grid">
+                <div class="form-group">
+                    <label for="taskEditorDate">Date <span class="form-label-optional">optional</span></label>
+                    <input type="date" id="taskEditorDate" onchange="onTaskEditorDateChange()">
+                </div>
+                <div class="form-group">
+                    <label for="taskEditorTime">Time <span class="form-label-optional">optional</span></label>
+                    <input type="time" id="taskEditorTime">
+                </div>
+            </div>
+            <fieldset class="form-group task-editor-visibility" id="taskEditorVisibilityGroup">
+                <legend>Visible in Daily to</legend>
+                <label class="checkbox-label"><input type="radio" name="taskEditorVisibility" value="private" checked> Only me and the people on the task</label>
+                <label class="checkbox-label"><input type="radio" name="taskEditorVisibility" value="team"> The whole team</label>
+            </fieldset>
+            <p class="form-hint" id="taskEditorScheduleHint"></p>
+            <div class="modal-buttons">
+                <button class="btn btn-primary" type="button" onclick="saveTaskEditor()">Save</button>
+                <button class="btn btn-cancel" type="button" onclick="closeTaskEditor()">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <div class="modal" id="dailyModal" data-dirty-check>
         <div class="modal-content" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dailyModalTitle">
@@ -281,6 +369,11 @@
             <div class="modal-title" id="vacationOptionsTitle">Assign Leave</div>
             <p class="vacation-selection-label" id="vacationSelectionLabel"></p>
             <div class="form-group">
+                <label for="absenceTypeSelect">Reason</label>
+                <select id="absenceTypeSelect" onchange="onAbsenceTypeChange()"></select>
+                <p class="form-hint" id="absenceTypeHint"></p>
+            </div>
+            <div class="form-group" id="vacationTypeGroup">
                 <label for="vacationTypeSelect">Charge to Balance</label>
                 <select id="vacationTypeSelect"></select>
             </div>
@@ -419,8 +512,8 @@
 
     <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-    <script src="config.js?v=20261019"></script>
-    <script src="app.js?v=20261019"></script>
+    <script src="config.js?v=20261028"></script>
+    <script src="app.js?v=20261028"></script>
 </body>
 
 </html>

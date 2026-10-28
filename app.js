@@ -209,7 +209,8 @@ function normalizeUserDirectory(rawDirectory) {
             initials,
             email: normalizeEmail(row.email || getDefaultEmailByInitials(initials)),
             passwordHash: String(row.passwordHash || row.password_hash || ''),
-            weeklyHours: normalizeWeeklyHours(row.weeklyHours !== undefined ? row.weeklyHours : row.weekly_hours)
+            weeklyHours: normalizeWeeklyHours(row.weeklyHours !== undefined ? row.weeklyHours : row.weekly_hours),
+            holidayRegion: normalizeHolidayRegion(row.holidayRegion !== undefined ? row.holidayRegion : row.holiday_region)
         };
     });
 
@@ -251,7 +252,7 @@ async function loadUserDirectory() {
 
     const { data, error } = await supabaseClient
         .from(APP_USERS_TABLE)
-        .select('initials,email,password_hash,weekly_hours')
+        .select('*')
         .order('initials', { ascending: true });
 
     if (!error) {
@@ -264,7 +265,8 @@ async function loadUserDirectory() {
                     initials,
                     email: normalizeEmail(row.email || getDefaultEmailByInitials(initials)),
                     passwordHash: String(row.password_hash || ''),
-                    weeklyHours: normalizeWeeklyHours(row.weekly_hours)
+                    weeklyHours: normalizeWeeklyHours(row.weekly_hours),
+                    holidayRegion: normalizeHolidayRegion(row.holiday_region)
                 };
             });
             userDirectory = normalizeUserDirectory(supabaseDirectory);
@@ -407,7 +409,8 @@ const MODAL_CLOSE_HANDLERS = {
     userSettingsModal: () => closeUserSettingsModal(),
     projectModal: () => closeProjectModal(),
     renameProjectModal: () => closeRenameProjectModal(),
-    taskDetailModal: () => closeTaskDetailModal()
+    taskDetailModal: () => closeTaskDetailModal(),
+    taskEditorModal: () => closeTaskEditor()
 };
 const modalOpenerStack = [];
 
@@ -504,6 +507,92 @@ function getProjectGroup(project) {
     if (phase === 'Completed' || phase === 'Cancelled') return 'completados';
     if (phase === 'BAU') return 'bau';
     return 'activos';
+}
+
+// =====================================================
+// ============ BÚSQUEDA DE PROYECTOS ==================
+// La comparten el buscador del sidebar y el del dashboard, para que
+// la misma consulta encuentre lo mismo en los dos sitios.
+//   - sin mayúsculas ni acentos ("operacion" encuentra "Operación")
+//   - por palabras, y TODAS deben aparecer (en cualquier orden)
+//   - en varios campos, no solo el nombre
+// =====================================================
+
+function normalizeSearchText(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase();
+}
+
+function getSearchTokens(query) {
+    return normalizeSearchText(query).split(/\s+/).filter(Boolean);
+}
+
+// Palabras que el equipo usa y que no coinciden literalmente con el
+// dato guardado (fases y estados se guardan en otro vocabulario).
+const SEARCH_SYNONYMS = {
+    done: 'completed', finished: 'completed', closed: 'completed',
+    maintenance: 'bau', hold: 'on hold', paused: 'on hold',
+    green: 'verde', amber: 'ambar', red: 'rojo'
+};
+
+function getProjectSearchHaystack(project) {
+    const members = (project.responsibles || []).map(initials => `${initials} ${getUserEmailByInitials(initials) || ''}`);
+    return normalizeSearchText([
+        project.name,
+        project.description,
+        project.country,
+        project.phase,
+        project.stakeholders,
+        project.benefits,
+        project.status,
+        getPriorityLabel(project.priority),
+        ...members
+    ].join(' \u0001 '));
+}
+
+function projectMatchesQuery(project, query) {
+    const tokens = getSearchTokens(query);
+    if (!tokens.length) return true;
+    const haystack = getProjectSearchHaystack(project);
+    return tokens.every(token => haystack.includes(token) || (SEARCH_SYNONYMS[token] && haystack.includes(SEARCH_SYNONYMS[token])));
+}
+
+// Marca con <mark> las palabras buscadas dentro de `text`, respetando el
+// texto original (con acentos) aunque la comparación se haga sin ellos.
+function highlightSearchMatches(text, query) {
+    const source = String(text || '');
+    const tokens = getSearchTokens(query);
+    if (!tokens.length) return escapeHtml(source);
+
+    let normalized = '';
+    const originIndex = [];
+    for (let i = 0; i < source.length; i++) {
+        for (const ch of normalizeSearchText(source[i])) {
+            normalized += ch;
+            originIndex.push(i);
+        }
+    }
+
+    const marked = new Array(source.length).fill(false);
+    tokens.forEach(token => {
+        let from = normalized.indexOf(token);
+        while (from !== -1) {
+            for (let k = from; k < from + token.length; k++) marked[originIndex[k]] = true;
+            from = normalized.indexOf(token, from + token.length);
+        }
+    });
+
+    let html = '';
+    let open = false;
+    for (let i = 0; i < source.length; i++) {
+        if (marked[i] && !open) { html += '<mark>'; open = true; }
+        if (!marked[i] && open) { html += '</mark>'; open = false; }
+        html += escapeHtml(source[i]);
+    }
+    if (open) html += '</mark>';
+    return html;
 }
 
 // =====================================================
@@ -646,20 +735,50 @@ function getTasksForWeek(weekKey) {
     return comments.concat(teamDayTasks);
 }
 
+// Días laborables de la semana (lunes a viernes) que la persona NO
+// tiene libres. Un festivo de su región o cualquier ausencia (también
+// bajas y asuntos personales, aunque no carguen saldo) le quita ese día
+// de capacidad: una semana con 2 días libres son 3/5 de su jornada.
+function getWeekDaysOff(user, weekKey) {
+    const monday = parseDateKeyToDate(weekKey);
+    const result = { holidays: 0, absences: 0 };
+    if (!monday) return result;
+    const initials = normalizeInitials(user);
+    for (let i = 0; i < 5; i++) {
+        const day = new Date(monday);
+        day.setDate(day.getDate() + i);
+        const dateKey = formatDateKey(day);
+        if (isHolidayForMember(initials, dateKey)) {
+            result.holidays += 1;
+        } else if ((teamVacations || []).some(v =>
+            normalizeInitials(v.user_initials) === initials && dateKey >= v.start_date && dateKey <= v.end_date)) {
+            result.absences += 1;
+        }
+    }
+    return result;
+}
+
 // Carga de una semana, por persona. Siempre devuelve entrada para
 // todo el equipo, aunque no tenga nada asignado, para que el widget
 // pueda pintar la plantilla completa.
 function computeWeekCapacity(weekKey) {
-    const blank = (user, extra) => Object.assign({
-        user,
-        baselineHours: getUserWeeklyHours(user),
-        taskHours: 0,
-        pendingHours: 0,
-        taskCount: 0,
-        byProject: {},
-        overrideHours: null,
-        note: ''
-    }, extra || {});
+    const blank = (user, extra) => {
+        const fullWeekHours = getUserWeeklyHours(user);
+        const daysOff = getWeekDaysOff(user, weekKey);
+        const workdays = 5 - daysOff.holidays - daysOff.absences;
+        return Object.assign({
+            user,
+            fullWeekHours,
+            daysOff,
+            baselineHours: Math.round((fullWeekHours * workdays / 5) * 10) / 10,
+            taskHours: 0,
+            pendingHours: 0,
+            taskCount: 0,
+            byProject: {},
+            overrideHours: null,
+            note: ''
+        }, extra || {});
+    };
 
     const result = {};
     teamMembers.forEach(user => { result[user] = blank(user); });
@@ -694,8 +813,12 @@ function computeWeekCapacity(weekKey) {
             entry.note = override.note || '';
         }
         entry.effectiveHours = entry.overrideHours !== null ? entry.overrideHours : entry.taskHours;
-        entry.percent = entry.baselineHours > 0
-            ? Math.round((entry.effectiveHours / entry.baselineHours) * 100)
+        // Semana entera libre: no hay base sobre la que medir. Se mide
+        // contra la jornada completa para que horas asignadas no queden
+        // escondidas tras un 0%.
+        const denominator = entry.baselineHours > 0 ? entry.baselineHours : entry.fullWeekHours;
+        entry.percent = denominator > 0
+            ? Math.round((entry.effectiveHours / denominator) * 100)
             : 0;
     });
 
@@ -802,6 +925,19 @@ function getUrgencyLabel(value) {
     return { Normal: 'Normal', Alta: 'High', 'Máxima': 'Critical' }[value] || value || 'Normal';
 }
 
+// Escala visual única de prioridad (low < medium < high < critical) para
+// que una tarea urgente se lea igual de llamativa en todas las vistas.
+// La urgencia de daily_comments no tiene nivel "bajo": Normal = medium.
+function getUrgencyLevel(value) {
+    return { Normal: 'medium', Alta: 'high', 'Máxima': 'critical' }[value] || 'medium';
+}
+function getPriorityLevel(value) {
+    return { Baja: 'low', Media: 'medium', Alta: 'high', 'Crítica': 'critical' }[value] || 'medium';
+}
+function renderPriorityBadge(level, label) {
+    return `<span class="prio-badge prio-${level}">${escapeHtml(label)}</span>`;
+}
+
 function toggleIndicatorDropdown(event, type) {
     event.stopPropagation();
     document.querySelectorAll('.indicator-dropdown').forEach(d => d.classList.remove('active'));
@@ -832,98 +968,182 @@ async function updateIndicator(event, projectId, field, value) {
 }
 
 
-        // Public holidays per country. Each team member follows the calendar of
-        // their country (see MEMBER_COUNTRY). Holidays are marked in the Daily and
-        // Team calendars but NEVER count as vacation days.
-        const HOLIDAYS_BY_COUNTRY = {
-            // Spain (national + Madrid) — owners: TB, AR, JG
-            ES: {
-                2025: [
-                    '2025-01-01', '2025-01-06', '2025-04-17', '2025-04-18',
-                    '2025-05-01', '2025-05-02', '2025-07-25', '2025-08-15',
-                    '2025-10-12', '2025-11-01', '2025-11-09', '2025-12-06',
-                    '2025-12-08', '2025-12-25'
-                ],
-                2026: [
-                    '2026-01-01', '2026-01-06', '2026-04-02', '2026-04-03',
-                    '2026-05-01', '2026-05-02', '2026-05-15', '2026-08-15',
-                    '2026-10-12', '2026-11-02', '2026-11-09', '2026-12-08',
-                    '2026-12-25'
-                ],
-                2027: [
-                    '2027-01-01', '2027-01-06', '2027-03-25', '2027-03-26',
-                    '2027-05-01', '2027-10-12', '2027-11-01', '2027-12-06',
-                    '2027-12-08', '2027-12-25'
-                ]
+        // =====================================================
+        // ========== FESTIVOS POR REGIÓN (no por país) =========
+        // Cada persona sigue el calendario de SU ciudad: nacional +
+        // autonómico + los dos festivos locales. Por país no basta: el
+        // 9-nov es festivo en Madrid ciudad y no en Alicante. Los festivos
+        // se pintan en Daily y Team y NUNCA cuentan como vacaciones.
+        //
+        // Fuentes (para actualizar, ver la skill update-holidays):
+        //   ES-MD     BOCM (Decreto 75/2025) + Ayto. Madrid; 2027: BOE-A-2026-21254
+        //   ES-VC-ALC GVA (Decreto 100/2025) + DOGV 14-11-2025 (locales Alicante);
+        //             2027: BOE-A-2026-21254, locales de 2027 aún sin publicar
+        //   PT-LIS    Código do Trabalho art. 234 + Câmara de Lisboa (13 jun)
+        //   IN-MH     Notificación GAD Maharashtra 2026 (fuente secundaria)
+        // 2025 es un año pasado: se conserva lo que había, sin revalidar.
+        // =====================================================
+        const HOLIDAYS_BY_REGION = {
+            // Madrid ciudad — AR, JG
+            'ES-MD': {
+                2025: {
+                    '2025-01-01': 'New Year', '2025-01-06': 'Epiphany', '2025-04-17': 'Maundy Thursday',
+                    '2025-04-18': 'Good Friday', '2025-05-01': 'Labour Day', '2025-05-02': 'Community of Madrid Day',
+                    '2025-07-25': 'Saint James', '2025-08-15': 'Assumption', '2025-10-12': 'National Day',
+                    '2025-11-01': 'All Saints', '2025-11-09': 'Almudena (Madrid city)', '2025-12-06': 'Constitution Day',
+                    '2025-12-08': 'Immaculate Conception', '2025-12-25': 'Christmas'
+                },
+                2026: {
+                    '2026-01-01': 'New Year', '2026-01-06': 'Epiphany', '2026-04-02': 'Maundy Thursday',
+                    '2026-04-03': 'Good Friday', '2026-05-01': 'Labour Day', '2026-05-02': 'Community of Madrid Day',
+                    '2026-05-15': 'San Isidro (Madrid city)', '2026-08-15': 'Assumption', '2026-10-12': 'National Day',
+                    '2026-11-02': 'All Saints (moved to Monday)', '2026-11-09': 'Almudena (Madrid city)',
+                    '2026-12-07': 'Constitution Day (moved to Monday)', '2026-12-08': 'Immaculate Conception',
+                    '2026-12-25': 'Christmas'
+                },
+                2027: {
+                    '2027-01-01': 'New Year', '2027-01-06': 'Epiphany', '2027-03-19': 'Saint Joseph',
+                    '2027-03-25': 'Maundy Thursday', '2027-03-26': 'Good Friday', '2027-05-01': 'Labour Day',
+                    '2027-05-15': 'San Isidro (Madrid city)', '2027-08-16': 'Assumption (moved to Monday)',
+                    '2027-10-12': 'National Day', '2027-11-01': 'All Saints', '2027-11-09': 'Almudena (Madrid city)',
+                    '2027-12-06': 'Constitution Day', '2027-12-08': 'Immaculate Conception', '2027-12-25': 'Christmas'
+                }
             },
-            // Portugal (national) — owner: IM
-            PT: {
-                2025: [
-                    '2025-01-01', '2025-04-18', '2025-04-20', '2025-04-25',
-                    '2025-05-01', '2025-06-10', '2025-06-19', '2025-08-15',
-                    '2025-10-05', '2025-11-01', '2025-12-01', '2025-12-08',
-                    '2025-12-25'
-                ],
-                2026: [
-                    '2026-01-01', '2026-04-03', '2026-04-05', '2026-04-25',
-                    '2026-05-01', '2026-06-04', '2026-06-10', '2026-08-15',
-                    '2026-10-05', '2026-11-01', '2026-12-01', '2026-12-08',
-                    '2026-12-25'
-                ],
-                2027: [
-                    '2027-01-01', '2027-03-26', '2027-03-28', '2027-04-25',
-                    '2027-05-01', '2027-05-27', '2027-06-10', '2027-08-15',
-                    '2027-10-05', '2027-11-01', '2027-12-01', '2027-12-08',
-                    '2027-12-25'
-                ]
+            // Alicante (Comunitat Valenciana) — TB
+            'ES-VC-ALC': {
+                2025: {
+                    '2025-01-01': 'New Year', '2025-01-06': 'Epiphany', '2025-03-19': 'Saint Joseph',
+                    '2025-04-18': 'Good Friday', '2025-04-21': 'Easter Monday', '2025-05-01': 'Labour Day',
+                    '2025-06-23': 'Fogueres de Sant Joan (Alicante)', '2025-06-24': 'Saint John',
+                    '2025-08-15': 'Assumption', '2025-10-09': 'Valencian Community Day', '2025-11-01': 'All Saints',
+                    '2025-12-06': 'Constitution Day', '2025-12-08': 'Immaculate Conception', '2025-12-25': 'Christmas'
+                },
+                2026: {
+                    '2026-01-01': 'New Year', '2026-01-06': 'Epiphany', '2026-03-19': 'Saint Joseph',
+                    '2026-04-03': 'Good Friday', '2026-04-06': 'Easter Monday', '2026-04-16': 'Santa Faz (Alicante)',
+                    '2026-05-01': 'Labour Day', '2026-06-23': 'Fogueres de Sant Joan (Alicante)',
+                    '2026-06-24': 'Saint John', '2026-08-15': 'Assumption', '2026-10-09': 'Valencian Community Day',
+                    '2026-10-12': 'National Day', '2026-12-08': 'Immaculate Conception', '2026-12-25': 'Christmas'
+                },
+                // Solo nacional + autonómico: los 2 locales de Alicante se publican en el DOGV (nov.)
+                2027: {
+                    '2027-01-01': 'New Year', '2027-01-06': 'Epiphany', '2027-03-19': 'Saint Joseph',
+                    '2027-03-26': 'Good Friday', '2027-03-29': 'Easter Monday', '2027-05-01': 'Labour Day',
+                    '2027-10-09': 'Valencian Community Day', '2027-10-12': 'National Day', '2027-11-01': 'All Saints',
+                    '2027-12-06': 'Constitution Day', '2027-12-08': 'Immaculate Conception', '2027-12-25': 'Christmas'
+                }
             },
-            // India (Mumbai / Maharashtra) — owner: AD. Fixed-date national holidays;
-            // movable festival dates to be validated when AD joins the active roster.
-            IN: {
-                2025: [
-                    '2025-01-26', '2025-03-14', '2025-08-15', '2025-08-27',
-                    '2025-10-02', '2025-10-21', '2025-12-25'
-                ],
-                2026: [
-                    '2026-01-26', '2026-03-04', '2026-08-15', '2026-09-14',
-                    '2026-10-02', '2026-11-08', '2026-12-25'
-                ],
-                2027: [
-                    '2027-01-26', '2027-08-15', '2027-10-02', '2027-12-25'
-                ]
+            // Lisboa — IM
+            'PT-LIS': {
+                2025: {
+                    '2025-01-01': 'New Year', '2025-04-18': 'Good Friday', '2025-04-20': 'Easter',
+                    '2025-04-25': 'Freedom Day', '2025-05-01': 'Labour Day', '2025-06-10': 'Portugal Day',
+                    '2025-06-13': 'Santo António (Lisbon)', '2025-06-19': 'Corpus Christi', '2025-08-15': 'Assumption',
+                    '2025-10-05': 'Republic Day', '2025-11-01': 'All Saints', '2025-12-01': 'Restoration of Independence',
+                    '2025-12-08': 'Immaculate Conception', '2025-12-25': 'Christmas'
+                },
+                2026: {
+                    '2026-01-01': 'New Year', '2026-04-03': 'Good Friday', '2026-04-05': 'Easter',
+                    '2026-04-25': 'Freedom Day', '2026-05-01': 'Labour Day', '2026-06-04': 'Corpus Christi',
+                    '2026-06-10': 'Portugal Day', '2026-06-13': 'Santo António (Lisbon)', '2026-08-15': 'Assumption',
+                    '2026-10-05': 'Republic Day', '2026-11-01': 'All Saints', '2026-12-01': 'Restoration of Independence',
+                    '2026-12-08': 'Immaculate Conception', '2026-12-25': 'Christmas'
+                },
+                2027: {
+                    '2027-01-01': 'New Year', '2027-03-26': 'Good Friday', '2027-03-28': 'Easter',
+                    '2027-04-25': 'Freedom Day', '2027-05-01': 'Labour Day', '2027-05-27': 'Corpus Christi',
+                    '2027-06-10': 'Portugal Day', '2027-06-13': 'Santo António (Lisbon)', '2027-08-15': 'Assumption',
+                    '2027-10-05': 'Republic Day', '2027-11-01': 'All Saints', '2027-12-01': 'Restoration of Independence',
+                    '2027-12-08': 'Immaculate Conception', '2027-12-25': 'Christmas'
+                }
+            },
+            // Mumbai (Maharashtra) — AD
+            'IN-MH': {
+                2025: {
+                    '2025-01-26': 'Republic Day', '2025-03-14': 'Holi', '2025-08-15': 'Independence Day',
+                    '2025-08-27': 'Ganesh Chaturthi', '2025-10-02': 'Gandhi Jayanti', '2025-10-21': 'Diwali',
+                    '2025-12-25': 'Christmas'
+                },
+                2026: {
+                    '2026-01-26': 'Republic Day', '2026-02-15': 'Mahashivratri', '2026-02-19': 'Shivaji Maharaj Jayanti',
+                    '2026-03-03': 'Holi', '2026-03-19': 'Gudi Padwa', '2026-03-21': 'Ramzan Id',
+                    '2026-03-26': 'Ram Navami', '2026-03-31': 'Mahavir Jayanti', '2026-04-03': 'Good Friday',
+                    '2026-04-14': 'Ambedkar Jayanti', '2026-05-01': 'Maharashtra Day / Buddha Purnima',
+                    '2026-05-28': 'Bakri Id', '2026-06-26': 'Muharram', '2026-08-15': 'Independence Day',
+                    '2026-08-26': 'Id-E-Milad', '2026-09-14': 'Ganesh Chaturthi', '2026-10-02': 'Gandhi Jayanti',
+                    '2026-10-20': 'Dussehra', '2026-11-08': 'Diwali (Lakshmi Pujan)', '2026-11-10': 'Diwali (Bali Pratipada)',
+                    '2026-11-24': 'Guru Nanak Jayanti', '2026-12-25': 'Christmas'
+                },
+                // Solo fiestas de fecha fija: la lista GAD de 2027 aún no está publicada
+                2027: {
+                    '2027-01-26': 'Republic Day', '2027-05-01': 'Maharashtra Day', '2027-08-15': 'Independence Day',
+                    '2027-10-02': 'Gandhi Jayanti', '2027-12-25': 'Christmas'
+                }
             }
         };
 
-        // Which country calendar each team member follows.
-        const MEMBER_COUNTRY = { TB: 'ES', AR: 'ES', JG: 'ES', IM: 'PT', AD: 'IN' };
-        const COUNTRY_LABEL = { ES: 'Spain', PT: 'Portugal', IN: 'India' };
+        const HOLIDAY_REGION_LABEL = { 'ES-MD': 'Madrid', 'ES-VC-ALC': 'Alicante', 'PT-LIS': 'Lisbon', 'IN-MH': 'Mumbai' };
 
-        function getMemberCountry(initials) {
-            return MEMBER_COUNTRY[(initials || '').trim().toUpperCase()] || 'ES';
+        // Años cuyo calendario de esa región está incompleto (faltan los
+        // locales o la lista oficial). Se avisa en la vista Team.
+        const HOLIDAY_REGION_PENDING_YEARS = { 'ES-VC-ALC': [2027], 'IN-MH': [2027] };
+
+        // Región por defecto de cada persona. app_users.holiday_region, si
+        // trae un código conocido, manda sobre esta tabla.
+        const DEFAULT_MEMBER_REGION = { TB: 'ES-VC-ALC', AR: 'ES-MD', JG: 'ES-MD', IM: 'PT-LIS', AD: 'IN-MH' };
+        const FALLBACK_HOLIDAY_REGION = 'ES-MD';
+
+        function normalizeHolidayRegion(value) {
+            const code = String(value || '').trim().toUpperCase();
+            return HOLIDAYS_BY_REGION[code] ? code : '';
         }
 
-        // Cache of flattened holiday Sets per country.
-        const _holidaySetCache = {};
-        function getHolidaySetForCountry(country) {
-            if (!_holidaySetCache[country]) {
-                const byYear = HOLIDAYS_BY_COUNTRY[country] || {};
-                _holidaySetCache[country] = new Set(Object.values(byYear).flat());
-            }
-            return _holidaySetCache[country];
+        function getMemberRegion(initials) {
+            const key = normalizeInitials(initials);
+            const fromDirectory = userDirectory[key] && userDirectory[key].holidayRegion;
+            return fromDirectory || DEFAULT_MEMBER_REGION[key] || FALLBACK_HOLIDAY_REGION;
+        }
+
+        function getHolidayName(region, dateKey) {
+            const byYear = HOLIDAYS_BY_REGION[region] || {};
+            const year = byYear[Number(String(dateKey).slice(0, 4))];
+            return (year && year[dateKey]) || '';
         }
 
         function isHolidayForMember(initials, dateKey) {
-            return getHolidaySetForCountry(getMemberCountry(initials)).has(dateKey);
+            return !!getHolidayName(getMemberRegion(initials), dateKey);
         }
 
-        // Country codes that have a holiday on a given date among the active team.
-        function teamHolidayCountriesOnDate(dateKey) {
-            const countries = new Set(teamMembers.map(getMemberCountry));
-            return Array.from(countries).filter(c => getHolidaySetForCountry(c).has(dateKey));
+        // Quién del equipo tiene festivo ese día, agrupado por región:
+        // [{ region, label, name, members: ['AR', 'JG'] }]
+        function teamHolidaysOnDate(dateKey) {
+            const byRegion = {};
+            teamMembers.forEach(member => {
+                const region = getMemberRegion(member);
+                const name = getHolidayName(region, dateKey);
+                if (!name) return;
+                if (!byRegion[region]) byRegion[region] = { region, label: HOLIDAY_REGION_LABEL[region] || region, name, members: [] };
+                byRegion[region].members.push(member);
+            });
+            return Object.values(byRegion);
         }
 
         function isHolidayForAnyTeamMember(dateKey) {
-            return teamHolidayCountriesOnDate(dateKey).length > 0;
+            return teamHolidaysOnDate(dateKey).length > 0;
+        }
+
+        function describeTeamHolidays(dateKey) {
+            return teamHolidaysOnDate(dateKey)
+                .map(h => `${h.label} (${h.members.join(', ')}): ${h.name}`)
+                .join(' · ');
+        }
+
+        // Regiones del equipo cuyo calendario de `year` falta o está incompleto.
+        function getPendingHolidayRegions(year) {
+            const regions = new Set(teamMembers.map(getMemberRegion));
+            return Array.from(regions).filter(region =>
+                !(HOLIDAYS_BY_REGION[region] || {})[year] ||
+                (HOLIDAY_REGION_PENDING_YEARS[region] || []).includes(year));
         }
 
         let projects = [];
@@ -932,7 +1152,34 @@ async function updateIndicator(event, projectId, field, value) {
         let selectedVacationDays = []; // Rastrear días seleccionados para vacaciones
         let pendingVacationSelection = null;
         let vacationBalanceYear = new Date().getFullYear();
-        let vacationLegendFilter = null; // null | 'current_year' | 'previous_year' | 'willis_choice'
+        let vacationLegendFilter = null; // null | 'current_year' | 'previous_year' | 'next_year' | 'willis_choice' | 'absence'
+
+        // Motivo de la ausencia (team_vacations.absence_type). Solo las
+        // vacaciones cargan saldo; el resto se guarda con vacation_type
+        // 'not_charged'. El motivo concreto solo lo ve el titular: para los
+        // demás es "Absent" (es un dato personal, una baja es de salud).
+        const ABSENCE_TYPES = {
+            vacation: 'Vacation',
+            sick_leave: 'Sick leave',
+            personal: 'Personal matter'
+        };
+        const CHARGED_VACATION_TYPES = ['current_year', 'previous_year', 'next_year', 'willis_choice'];
+
+        function getAbsenceType(vacation) {
+            return ABSENCE_TYPES[vacation && vacation.absence_type] ? vacation.absence_type : 'vacation';
+        }
+
+        function isVacationAbsence(vacation) {
+            return getAbsenceType(vacation) === 'vacation' && vacation.vacation_type !== 'not_charged';
+        }
+
+        // Texto de la ausencia según quién mira.
+        function describeAbsenceFor(vacation, viewer) {
+            if (isVacationAbsence(vacation)) return 'Leave';
+            return normalizeInitials(vacation.user_initials) === normalizeInitials(viewer)
+                ? ABSENCE_TYPES[getAbsenceType(vacation)]
+                : 'Absent';
+        }
         // Días anuales de referencia usados solo para la barra de balance visual del resumen de vacaciones.
         const STANDARD_VACATION_DAYS_PER_YEAR = 22;
         let currentMonth = new Date();
@@ -1639,11 +1886,40 @@ function setDashboardFilter(field, value) {
                 return; // Elementos no existen aún
             }
 
+            // Con búsqueda activa: solo proyectos que casan, y cada sección
+            // con resultados se despliega SIN tocar sidebarCollapsed, para
+            // que al borrar la búsqueda vuelva a como el usuario la tenía.
+            const searching = getSearchTokens(sidebarSearchQuery).length > 0;
+            const matches = project => !searching || projectMatchesQuery(project, sidebarSearchQuery);
+            const visibleLive = projects.filter(matches);
+            const visibleDeleted = deletedProjects.filter(matches);
+            const matchCountByGroup = { activos: 0, bau: 0, completados: 0, archivados: 0, eliminados: visibleDeleted.length };
+            visibleLive.forEach(p => { matchCountByGroup[getProjectGroup(p)] += 1; });
+
             Object.entries(lists).forEach(([group, list]) => {
                 if (!list) return;
                 list.innerHTML = '';
-                list.className = `projects-list ${sidebarCollapsed[group] ? 'collapsed' : 'expanded'}`;
+                const collapsed = searching ? matchCountByGroup[group] === 0 : sidebarCollapsed[group];
+                list.className = `projects-list ${collapsed ? 'collapsed' : 'expanded'}`;
+                const title = document.getElementById(SIDEBAR_TITLE_IDS[group]);
+                if (title) {
+                    // Durante la búsqueda se ocultan las secciones vacías
+                    title.hidden = searching && matchCountByGroup[group] === 0;
+                    list.hidden = title.hidden;
+                    title.setAttribute('aria-expanded', String(!collapsed));
+                    const icon = title.querySelector('.section-toggle-icon');
+                    if (icon) icon.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
+                }
             });
+
+            const emptyMsg = document.getElementById('sidebarSearchEmpty');
+            const totalMatches = visibleLive.length + visibleDeleted.length;
+            if (emptyMsg) {
+                emptyMsg.hidden = !searching || totalMatches > 0;
+                emptyMsg.textContent = searching ? `No projects match “${sidebarSearchQuery.trim()}”.` : '';
+            }
+            const status = document.getElementById('sidebarSearchStatus');
+            if (status) status.textContent = searching ? `${totalMatches} ${totalMatches === 1 ? 'project' : 'projects'} found` : '';
 
             // Un <li> de proyecto: el botón de selección y el menú "..."
             // que aparece al pasar el ratón por encima.
@@ -1653,21 +1929,21 @@ function setDashboardFilter(field, value) {
                 const isActive = currentProjectId === project.id;
                 li.innerHTML = `
                     <button type="button" class="project-item-select${isActive ? ' active' : ''}"${isActive ? ' aria-current="true"' : ''}
-                            onclick="selectProject(${jsArg(project.id)})">${escapeHtml(project.name)}</button>
+                            onclick="selectProject(${jsArg(project.id)})">${highlightSearchMatches(project.name, sidebarSearchQuery)}</button>
                     <button type="button" class="project-item-menu-btn" data-project-id="${escapeHtml(project.id)}"
                             title="Project options" aria-label="Options for ${escapeHtml(project.name)}" aria-haspopup="true"
                             onclick="openProjectMenu(event, ${jsArg(project.id)}, ${jsArg(state)})">⋯</button>`;
                 return li;
             };
 
-            projects.forEach(project => {
+            visibleLive.forEach(project => {
                 const group = getProjectGroup(project);
                 const list = lists[group];
                 if (!list) return;
                 list.appendChild(buildItem(project, group === 'archivados' ? 'archived' : 'live'));
             });
 
-            deletedProjects.forEach(project => {
+            visibleDeleted.forEach(project => {
                 if (!lists.eliminados) return;
                 lists.eliminados.appendChild(buildItem(project, 'deleted'));
             });
@@ -1970,10 +2246,56 @@ function setDashboardFilter(field, value) {
             showToast('Project permanently deleted', 'success');
         }
 
+        const SIDEBAR_TITLE_IDS = { activos: 'sidebarTitleActivos', bau: 'sidebarTitleBau', completados: 'sidebarTitleCompletados', archivados: 'sidebarTitleArchivados', eliminados: 'sidebarTitleEliminados' };
+
+        // Texto del buscador del sidebar. El <input> es HTML estático (no se
+        // re-renderiza), así que el tiempo real no le roba el foco.
+        let sidebarSearchQuery = '';
+
+        function setSidebarSearch(value) {
+            sidebarSearchQuery = String(value || '');
+            renderProjectsList();
+        }
+
+        function clearSidebarSearch() {
+            const input = document.getElementById('sidebarProjectSearch');
+            if (input) input.value = '';
+            setSidebarSearch('');
+        }
+
+        function handleSidebarSearchKey(event) {
+            if (event.key === 'Escape') {
+                // Primer Esc limpia; si ya está vacío, se deja al manejador global
+                if (!sidebarSearchQuery) return;
+                event.preventDefault();
+                event.stopPropagation();
+                clearSidebarSearch();
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                const first = document.querySelector('#sidebar .projects-list:not([hidden]) .project-item-select');
+                if (first) first.click();
+            } else if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                const first = document.querySelector('#sidebar .projects-list:not([hidden]) .project-item-select');
+                if (first) first.focus();
+            }
+        }
+
+        function focusSidebarSearch() {
+            const sidebar = document.getElementById('sidebar');
+            if (window.matchMedia('(max-width: 768px)').matches) {
+                if (sidebar && !sidebar.classList.contains('mobile-open')) toggleMobileSidebar();
+            } else if (sidebar && sidebar.classList.contains('collapsed')) {
+                setSidebarCollapsed(false);
+                sidebarAutoCollapsed = false;
+            }
+            const input = document.getElementById('sidebarProjectSearch');
+            if (input) { input.focus(); input.select(); }
+        }
+
         function toggleSidebarSection(section) {
             sidebarCollapsed[section] = !sidebarCollapsed[section];
-            const titleIds = { activos: 'sidebarTitleActivos', bau: 'sidebarTitleBau', completados: 'sidebarTitleCompletados', archivados: 'sidebarTitleArchivados', eliminados: 'sidebarTitleEliminados' };
-            const title = document.getElementById(titleIds[section]);
+            const title = document.getElementById(SIDEBAR_TITLE_IDS[section]);
             if (title) {
                 title.setAttribute('aria-expanded', String(!sidebarCollapsed[section]));
                 const icon = title.querySelector('.section-toggle-icon');
@@ -2107,8 +2429,19 @@ function setDashboardFilter(field, value) {
 
         // Team tasks for a day, newest meaningful order: pending first, then
         // by creation. Shared with everybody, unlike day_personal_tasks.
+        // Una tarea "private" solo la ven su creador y sus asignados; las
+        // de equipo, todos. Ocultación de interfaz: RLS sigue abierta.
+        function isDayTaskInvolvingMe(task) {
+            const me = normalizeInitials(currentUser || '');
+            return !!me && (task.createdBy === me || (task.assignees || []).includes(me));
+        }
+
+        function canCurrentUserSeeDayTask(task) {
+            return task.visibility !== 'private' || isDayTaskInvolvingMe(task);
+        }
+
         function getDayTeamTasksByDate(dateKey) {
-            return (dayTasks || []).filter(t => t.date === dateKey);
+            return (dayTasks || []).filter(t => t.date === dateKey && canCurrentUserSeeDayTask(t));
         }
 
         // Team tasks on that day that are mine: either assigned to me or left
@@ -2356,6 +2689,12 @@ function setDashboardFilter(field, value) {
                 description: t.description || '',
                 estimatedHours: Number(t.estimated_hours) || 0,
                 hoursByAssignee: normalizeHoursByAssignee(t.hours_by_assignee),
+                // Columnas de la vista Tasks (migrations_tasks_absences_regions.sql).
+                // Los defaults reproducen cómo se comportaba una tarea de día antes.
+                priority: ['Baja', 'Media', 'Alta', 'Crítica'].includes(t.priority) ? t.priority : 'Media',
+                effort: ['Bajo', 'Medio', 'Alto'].includes(t.effort) ? t.effort : '',
+                time: /^\d{2}:\d{2}$/.test(t.task_time || '') ? t.task_time : '',
+                visibility: t.visibility === 'private' ? 'private' : 'team',
                 createdBy: normalizeInitials(t.created_by || ''),
                 completed: !!t.completed,
                 createdAt: t.created_at,
@@ -2486,12 +2825,12 @@ function setDashboardFilter(field, value) {
                     : '';
 
                 html += `
-                <div class="day-personal-item day-task-item${task.completed ? ' done' : ''}${mine ? ' is-mine' : ''}">
+                <div class="day-personal-item day-task-item prio-edge-${getPriorityLevel(task.priority)}${task.completed ? ' done' : ''}${mine ? ' is-mine' : ''}">
                     <label class="day-personal-item-main">
                         <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleDayTeamTask(${jsArg(task.id)}, this.checked)">
                         <span class="day-task-body">
-                            <span class="day-task-text">${escapeHtml(task.text)}</span>
-                            <span class="day-task-meta">${projectChip}${assigneeChips}${task.createdBy ? `<span class="day-task-author">by ${escapeHtml(task.createdBy)}</span>` : ''}</span>
+                            <span class="day-task-text">${task.time ? `<span class="day-task-time">${escapeHtml(task.time)}</span> ` : ''}${escapeHtml(task.text)}</span>
+                            <span class="day-task-meta">${renderPriorityBadge(getPriorityLevel(task.priority), getPriorityLabel(task.priority))}${task.visibility === 'private' ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : ''}${projectChip}${assigneeChips}${task.createdBy ? `<span class="day-task-author">by ${escapeHtml(task.createdBy)}</span>` : ''}</span>
                         </span>
                     </label>
                     <button type="button" class="day-personal-delete" onclick="deleteDayTeamTask(${jsArg(task.id)})" title="Delete task" aria-label="Delete team task: ${escapeHtml(task.text)}">×</button>
@@ -2574,6 +2913,367 @@ function setDashboardFilter(field, value) {
             await loadDayTasks();
             renderDayPersonalTasksModal();
             renderActiveView();
+        }
+
+        // =====================================================
+        // ===================== VISTA TASKS ====================
+        // Lo que tiene asignado el usuario conectado, venga de donde
+        // venga: tareas de Daily (daily_comments, con proyecto) y tareas
+        // de day_tasks (con o sin proyecto, con o sin fecha). Cada uno ve
+        // solo lo suyo. Las tareas nuevas se crean en day_tasks:
+        //   - sin fecha  -> solo aquí, y no cuentan en la capacidad
+        //   - con fecha  -> también en Daily ese día, y sí cuentan
+        // =====================================================
+
+        let tasksFilters = { project: '', priority: '', showDone: false };
+        let taskEditorState = { id: null, assignees: [] };
+
+        // Elemento común de la lista, sea un comentario de Daily o una day_task.
+        function buildMyTaskItem(source, task, me) {
+            const isComment = source === 'comment';
+            return {
+                source,
+                id: task.id,
+                title: task.text || '',
+                description: task.description || '',
+                projectId: task.projectId || null,
+                date: task.date || '',
+                time: isComment ? '' : (task.time || ''),
+                level: isComment ? getUrgencyLevel(task.urgency) : getPriorityLevel(task.priority),
+                levelLabel: isComment ? getUrgencyLabel(task.urgency) : getPriorityLabel(task.priority),
+                effort: isComment ? '' : (task.effort || ''),
+                myHours: getTaskHoursForUser(task, me),
+                totalHours: getTaskTotalHours(task),
+                assignees: getTaskAssignees(task),
+                completed: !!task.completed,
+                isPrivate: isComment ? !!task.isPersonal : task.visibility === 'private',
+                canEdit: isComment ? canCurrentUserManageComment(task) : isDayTaskInvolvingMe(task)
+            };
+        }
+
+        function getMyTaskItems() {
+            const me = normalizeInitials(currentUser || '');
+            if (!me) return [];
+            const fromDaily = (dailyComments || [])
+                .filter(c => !c.parentId && canCurrentUserViewComment(c) &&
+                    (getTaskAssignees(c).includes(me) || (isPersonalComment(c) && getCommentOwnerInitials(c) === me)))
+                .map(c => buildMyTaskItem('comment', c, me));
+            const fromDayTasks = (dayTasks || [])
+                .filter(isDayTaskInvolvingMe)
+                .map(t => buildMyTaskItem('task', t, me));
+            return fromDaily.concat(fromDayTasks);
+        }
+
+        const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+
+        // Grupo temporal de una tarea respecto a hoy.
+        function getMyTaskGroup(item, todayKey, weekEndKey) {
+            if (item.completed) return 'done';
+            if (!item.date) return 'nodate';
+            if (item.date < todayKey) return 'overdue';
+            if (item.date === todayKey) return 'today';
+            if (item.date <= weekEndKey) return 'week';
+            return 'later';
+        }
+
+        const MY_TASK_GROUPS = [
+            ['overdue', 'Overdue'],
+            ['today', 'Today'],
+            ['week', 'Later this week'],
+            ['later', 'Upcoming'],
+            ['nodate', 'No date'],
+            ['done', 'Done']
+        ];
+
+        function updateTasksViewCount() {
+            const badge = document.getElementById('tasksViewCount');
+            if (!badge) return;
+            const pending = getMyTaskItems().filter(i => !i.completed).length;
+            badge.textContent = pending ? String(pending) : '';
+        }
+
+        function setTasksFilter(field, value) {
+            tasksFilters[field] = field === 'showDone' ? !!value : String(value || '');
+            renderTasksView();
+        }
+
+        function renderMyTaskItem(item) {
+            const me = normalizeInitials(currentUser || '');
+            const project = item.projectId ? findAnyProject(item.projectId) : null;
+            const others = item.assignees.filter(a => a !== me);
+            const when = item.date
+                ? `${formatDateDisplay(item.date)}${item.time ? ` · ${escapeHtml(item.time)}` : ''}`
+                : '';
+            const hours = item.myHours > 0
+                ? `${formatHours(item.myHours)}h${item.totalHours > item.myHours ? ` of ${formatHours(item.totalHours)}h` : ''}`
+                : '';
+            const effortLabel = item.effort ? getImpactLabel(item.effort) : '';
+            const titleAction = item.source === 'comment'
+                ? `openTaskDetail(${jsArg(item.id)})`
+                : (item.canEdit ? `openTaskEditor(${jsArg(item.id)})` : '');
+
+            return `<li class="my-task prio-edge-${item.level}${item.completed ? ' done' : ''}">
+                <input type="checkbox" class="my-task-check" ${item.completed ? 'checked' : ''}
+                       aria-label="Mark “${escapeHtml(item.title)}” as done"
+                       ${item.canEdit ? '' : 'disabled'}
+                       onchange="toggleMyTask(${jsArg(item.source)}, ${jsArg(item.id)}, this.checked)">
+                <div class="my-task-body">
+                    ${titleAction
+                        ? `<button type="button" class="my-task-title" onclick="${titleAction}">${escapeHtml(item.title)}</button>`
+                        : `<span class="my-task-title">${escapeHtml(item.title)}</span>`}
+                    ${item.description ? `<p class="my-task-desc">${escapeHtml(item.description)}</p>` : ''}
+                    <div class="my-task-meta">
+                        ${renderPriorityBadge(item.level, item.levelLabel)}
+                        ${effortLabel ? `<span class="my-task-chip" title="Effort">Effort: ${escapeHtml(effortLabel)}</span>` : ''}
+                        ${project ? `<span class="day-task-project">${escapeHtml(project.name)}</span>` : '<span class="my-task-chip my-task-chip--muted">No project</span>'}
+                        ${when ? `<span class="my-task-chip">${when}</span>` : ''}
+                        ${hours ? `<span class="my-task-chip" title="Your share of the estimated hours">${hours}</span>` : ''}
+                        ${others.map(a => `<span class="day-task-chip">${escapeHtml(a)}</span>`).join('')}
+                        ${item.isPrivate ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : ''}
+                        ${item.source === 'comment' ? '<span class="my-task-source" title="Created from Daily">Daily</span>' : ''}
+                    </div>
+                </div>
+                ${item.source === 'task' && item.canEdit ? `<div class="my-task-actions">
+                    <button type="button" class="comment-action-btn" onclick="openTaskEditor(${jsArg(item.id)})" aria-label="Edit task: ${escapeHtml(item.title)}">✏️ Edit</button>
+                    <button type="button" class="comment-action-btn comment-action-btn--danger" onclick="deleteMyTask(${jsArg(item.id)})" aria-label="Delete task: ${escapeHtml(item.title)}">🗑️</button>
+                </div>` : ''}
+            </li>`;
+        }
+
+        function renderTasksView() {
+            const container = document.getElementById('tasksView');
+            if (!container) return;
+
+            const todayKey = formatDateKey(new Date());
+            const weekEnd = getMonday(new Date());
+            weekEnd.setDate(weekEnd.getDate() + 6);
+            const weekEndKey = formatDateKey(weekEnd);
+            const thisWeekKey = formatDateKey(getMonday(new Date()));
+
+            const all = getMyTaskItems();
+            const pending = all.filter(i => !i.completed);
+            const pendingWeekHours = pending
+                .filter(i => i.date && getWeekKeyForDateKey(i.date) === thisWeekKey)
+                .reduce((sum, i) => sum + i.myHours, 0);
+            const unscheduledHours = pending.filter(i => !i.date).reduce((sum, i) => sum + i.myHours, 0);
+
+            const visible = all.filter(i =>
+                (!tasksFilters.project || (tasksFilters.project === '__none__' ? !i.projectId : i.projectId === tasksFilters.project)) &&
+                (!tasksFilters.priority || i.level === tasksFilters.priority));
+
+            const groups = {};
+            visible.forEach(item => {
+                const key = getMyTaskGroup(item, todayKey, weekEndKey);
+                (groups[key] = groups[key] || []).push(item);
+            });
+            Object.values(groups).forEach(list => list.sort((a, b) =>
+                (a.date || '9999').localeCompare(b.date || '9999') ||
+                (a.time || '99').localeCompare(b.time || '99') ||
+                PRIORITY_RANK[a.level] - PRIORITY_RANK[b.level]));
+
+            const projectIds = [...new Set(all.map(i => i.projectId).filter(Boolean))];
+            const projectOptions = projectIds
+                .map(id => findAnyProject(id))
+                .filter(Boolean)
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(p => `<option value="${escapeHtml(p.id)}" ${tasksFilters.project === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)
+                .join('');
+            const prioOption = (value, label) => `<option value="${value}" ${tasksFilters.priority === value ? 'selected' : ''}>${label}</option>`;
+
+            const groupsHtml = MY_TASK_GROUPS
+                .filter(([key]) => key !== 'done' || tasksFilters.showDone)
+                .filter(([key]) => (groups[key] || []).length)
+                .map(([key, label]) => `
+                <section class="my-task-group my-task-group--${key}" aria-label="${label}">
+                    <h3 class="my-task-group-title">${label}<span class="my-task-group-count">${groups[key].length}</span></h3>
+                    <ul class="my-task-list">${groups[key].map(renderMyTaskItem).join('')}</ul>
+                </section>`).join('');
+
+            container.innerHTML = `
+            <div class="tasks-header">
+                <div class="tasks-summary">
+                    <div class="tasks-summary-item"><span class="tasks-summary-value u-figure">${pending.length}</span><span class="tasks-summary-label">pending</span></div>
+                    <div class="tasks-summary-item"><span class="tasks-summary-value u-figure">${formatHours(pendingWeekHours)}h</span><span class="tasks-summary-label">pending this week</span></div>
+                    <div class="tasks-summary-item" title="Tasks without a date do not count toward weekly capacity"><span class="tasks-summary-value u-figure">${formatHours(unscheduledHours)}h</span><span class="tasks-summary-label">unscheduled</span></div>
+                </div>
+                <button type="button" class="btn btn-primary tasks-new-btn" onclick="openTaskEditor()">+ New task</button>
+            </div>
+            <div class="tasks-filters" role="group" aria-label="Filter tasks">
+                <label>Project
+                    <select onchange="setTasksFilter('project', this.value)">
+                        <option value="">All</option>
+                        <option value="__none__" ${tasksFilters.project === '__none__' ? 'selected' : ''}>No project</option>
+                        ${projectOptions}
+                    </select>
+                </label>
+                <label>Priority
+                    <select onchange="setTasksFilter('priority', this.value)">
+                        <option value="">All</option>
+                        ${prioOption('critical', 'Critical')}${prioOption('high', 'High')}${prioOption('medium', 'Medium')}${prioOption('low', 'Low')}
+                    </select>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" ${tasksFilters.showDone ? 'checked' : ''} onchange="setTasksFilter('showDone', this.checked)">
+                    Show done
+                </label>
+            </div>
+            ${groupsHtml || `<div class="empty-state">${all.length ? 'No tasks match these filters.' : 'Nothing assigned to you yet. Use “+ New task” to add one.'}</div>`}`;
+        }
+
+        async function toggleMyTask(source, id, done) {
+            if (source === 'comment') {
+                const comment = (dailyComments || []).find(c => c.id === id);
+                if (!comment || comment.completed === !!done) return;
+                if (await setCommentCompletion(id)) renderActiveView();
+                else renderTasksView();
+                return;
+            }
+            await toggleDayTeamTask(id, done);
+        }
+
+        async function deleteMyTask(taskId) {
+            const task = (dayTasks || []).find(t => t.id === taskId);
+            if (!task || !isDayTaskInvolvingMe(task)) return;
+            if (!confirm(`Delete “${task.text}”? It disappears for everyone on it.`)) return;
+            const { error } = await supabaseClient.from(DAY_TASKS_TABLE).delete().eq('id', taskId);
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Error deleting the task'), 'error');
+                return;
+            }
+            await loadDayTasks();
+            renderActiveView();
+            showToast('Task deleted', 'success');
+        }
+
+        // ---------- Editor de tarea ----------
+
+        function renderTaskEditorAssignees() {
+            const host = document.getElementById('taskEditorAssignees');
+            if (!host) return;
+            const me = normalizeInitials(currentUser || '');
+            host.innerHTML = teamMembers.filter(m => !isExcludedResponsible(m)).map(member => {
+                const on = taskEditorState.assignees.includes(member);
+                return `<button type="button" class="owner-picker-btn${on ? ' is-selected' : ''}" aria-pressed="${on}"
+                        title="${on ? 'Remove' : 'Add'} ${escapeHtml(member)}${member === me ? ' (you)' : ''}"
+                        onclick="toggleTaskEditorAssignee(${jsArg(member)})">
+                        <span class="owner-picker-check" aria-hidden="true">${on ? '✓' : '+'}</span>${escapeHtml(member)}
+                    </button>`;
+            }).join('');
+        }
+
+        function toggleTaskEditorAssignee(member) {
+            const list = taskEditorState.assignees;
+            const idx = list.indexOf(member);
+            if (idx === -1) list.push(member); else list.splice(idx, 1);
+            renderTaskEditorAssignees();
+        }
+
+        // Hora y visibilidad solo tienen sentido con fecha.
+        function onTaskEditorDateChange() {
+            const hasDate = !!document.getElementById('taskEditorDate').value;
+            const time = document.getElementById('taskEditorTime');
+            time.disabled = !hasDate;
+            if (!hasDate) time.value = '';
+            document.getElementById('taskEditorVisibilityGroup').hidden = !hasDate;
+            document.getElementById('taskEditorScheduleHint').textContent = hasDate
+                ? 'Shows in Daily on that day and counts toward your weekly capacity.'
+                : 'Without a date the task stays in Tasks only and does not count toward capacity.';
+        }
+
+        function openTaskEditor(taskId = null) {
+            const task = taskId ? (dayTasks || []).find(t => t.id === taskId) : null;
+            if (taskId && (!task || !isDayTaskInvolvingMe(task))) return;
+            const me = normalizeInitials(currentUser || '');
+
+            taskEditorState = {
+                id: task ? task.id : null,
+                assignees: task ? task.assignees.slice() : ((me && teamMembers.includes(me)) ? [me] : [])
+            };
+
+            const projectSelect = document.getElementById('taskEditorProject');
+            const live = getLiveProjects().slice().sort((a, b) => a.name.localeCompare(b.name));
+            const current = task && task.projectId && !live.some(p => p.id === task.projectId) ? findAnyProject(task.projectId) : null;
+            projectSelect.innerHTML = '<option value="">No project</option>' +
+                live.concat(current ? [current] : [])
+                    .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+            projectSelect.value = task ? (task.projectId || '') : '';
+
+            document.getElementById('taskEditorTitle').textContent = task ? 'Edit Task' : 'New Task';
+            document.getElementById('taskEditorText').value = task ? task.text : '';
+            document.getElementById('taskEditorDescription').value = task ? task.description : '';
+            document.getElementById('taskEditorPriority').value = task ? task.priority : 'Media';
+            document.getElementById('taskEditorEffort').value = task ? task.effort : '';
+            document.getElementById('taskEditorHours').value = task && task.estimatedHours ? task.estimatedHours : '';
+            document.getElementById('taskEditorDate').value = task ? (task.date || '') : '';
+            document.getElementById('taskEditorTime').value = task ? (task.time || '') : '';
+            const visibility = task ? task.visibility : 'private';
+            document.querySelectorAll('input[name="taskEditorVisibility"]').forEach(r => { r.checked = r.value === visibility; });
+
+            renderTaskEditorAssignees();
+            onTaskEditorDateChange();
+            openModal('taskEditorModal', '#taskEditorText');
+        }
+
+        function closeTaskEditor() {
+            closeModal('taskEditorModal');
+            taskEditorState = { id: null, assignees: [] };
+        }
+
+        async function saveTaskEditor() {
+            const textInput = document.getElementById('taskEditorText');
+            const text = textInput.value.trim();
+            if (!text) {
+                showToast('Add a title for the task', 'warning');
+                textInput.focus();
+                return;
+            }
+
+            const date = document.getElementById('taskEditorDate').value || null;
+            const time = date ? (document.getElementById('taskEditorTime').value || null) : null;
+            const hours = Math.min(1000, Math.max(0, Number(document.getElementById('taskEditorHours').value) || 0));
+            const assignees = sanitizeResponsiblesList(taskEditorState.assignees);
+            const checkedVisibility = document.querySelector('input[name="taskEditorVisibility"]:checked');
+            const existing = taskEditorState.id ? (dayTasks || []).find(t => t.id === taskEditorState.id) : null;
+
+            // El reparto personalizado por persona se conserva solo si no han
+            // cambiado ni el total ni las personas; si no, vuelve a partes iguales.
+            const sameSplit = existing && existing.estimatedHours === hours &&
+                existing.assignees.slice().sort().join() === assignees.slice().sort().join();
+
+            const payload = {
+                text,
+                description: document.getElementById('taskEditorDescription').value.trim(),
+                project_id: document.getElementById('taskEditorProject').value || null,
+                priority: document.getElementById('taskEditorPriority').value || 'Media',
+                effort: document.getElementById('taskEditorEffort').value || null,
+                estimated_hours: hours,
+                hours_by_assignee: sameSplit ? existing.hoursByAssignee : {},
+                assignees,
+                task_date: date,
+                task_time: time,
+                visibility: date && checkedVisibility ? checkedVisibility.value : 'private',
+                updated_at: new Date().toISOString()
+            };
+
+            const query = existing
+                ? supabaseClient.from(DAY_TASKS_TABLE).update(payload).eq('id', existing.id)
+                : supabaseClient.from(DAY_TASKS_TABLE).insert(Object.assign(payload, {
+                    created_by: normalizeInitials(currentUser || 'US'),
+                    completed: false
+                }));
+            const { error } = await query;
+
+            if (error) {
+                console.error(error);
+                showToast(formatSupabaseError(error, 'Error saving the task'), 'error');
+                return;
+            }
+
+            closeTaskEditor();
+            await loadDayTasks();
+            renderActiveView();
+            showToast(existing ? 'Task updated' : (date ? 'Task added to Tasks and Daily' : 'Task added'), 'success');
         }
 
         function renderDaily() {
@@ -2699,8 +3399,8 @@ function setDashboardFilter(field, value) {
             weekDates.forEach((date) => {
                 const dateKey = formatDateKey(date);
                 const isToday = dateKey === todayKey;
-                const holidayCountries = teamHolidayCountriesOnDate(dateKey);
-                const isHoliday = holidayCountries.length > 0;
+                const holidayDescription = describeTeamHolidays(dateKey);
+                const isHoliday = holidayDescription.length > 0;
 
                 const dayNameRaw = date.toLocaleDateString('en-GB', { weekday: 'long' });
                 const dayName = dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1);
@@ -2714,7 +3414,7 @@ function setDashboardFilter(field, value) {
                     headerClass += ' holiday-header';
                 }
 
-                const holidayTitle = isHoliday ? `Public holiday · ${holidayCountries.map(c => COUNTRY_LABEL[c] || c).join(', ')}` : '';
+                const holidayTitle = isHoliday ? `Public holiday · ${holidayDescription}` : '';
                 const holidayBadge = isHoliday ? `<span class="holiday-badge" title="${escapeHtml(holidayTitle)}">HOLIDAY</span>` : '';
                 const dayTaskBtnClass = getDayHeaderButtonClass(dateKey);
                 const dayTaskBtnTitle = escapeHtml(getDayHeaderButtonTitle(dateKey));
@@ -3225,7 +3925,7 @@ function setDashboardFilter(field, value) {
                 <div class="task-detail-meta">
                     ${project ? `<span class="day-task-project">${escapeHtml(project.name)}</span>` : ''}
                     <span class="task-detail-date">${formatDateDisplay(comment.date)}</span>
-                    <span class="task-detail-urgency urgency-${String(comment.urgency || 'Normal').toLowerCase()}">${escapeHtml(getUrgencyLabel(comment.urgency))}</span>
+                    ${renderPriorityBadge(getUrgencyLevel(comment.urgency), getUrgencyLabel(comment.urgency))}
                     ${comment.hasIncident ? '<span class="task-detail-incident">INCIDENT</span>' : ''}
                     ${comment.isPersonal ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : ''}
                     ${comment.completed ? '<span class="completion-badge">DONE</span>' : ''}
@@ -3646,6 +4346,9 @@ function setDashboardFilter(field, value) {
                 const completedClass = c.completed ? 'completed' : '';
                 const completedBadge = c.completed ? '<span class="completion-badge">✓ COMPLETED</span>' : '';
                 const personalBadge = c.isPersonal ? '<span class="completion-badge completion-badge--private">PRIVATE</span>' : '';
+                const owners = getTaskAssignees(c);
+                const isDetailOpen = expandedCommentDetails.has(c.id);
+                const urgencyBadge = renderPriorityBadge(getUrgencyLevel(c.urgency), getUrgencyLabel(c.urgency));
 
                 html += `<div class="comment-entry ${completedClass}">
                 <div class="comment-checkbox-wrapper">
@@ -3655,8 +4358,11 @@ function setDashboardFilter(field, value) {
                            onclick="toggleCommentCompletion(event, '${c.id}')">
                     <div class="comment-main">
                         <div class="comment-header">${formattedDate} [${escapeHtml(c.userName || "ND")}]${completedBadge}${personalBadge}</div>
-                        <div class="comment-meta">Owner: [${escapeHtml(c.responsible || 'ND')}]</div>
-                        <div class="comment-text">${escapeHtml(c.text).replace(/\n/g, '<br>')}</div>
+                        <div class="comment-meta">Owner: [${escapeHtml(owners.length ? owners.join(', ') : 'ND')}] ${urgencyBadge}${c.description ? ' <span class="comment-desc-hint" title="Has a description">📝</span>' : ''}</div>
+                        <button type="button" class="comment-text comment-text--clickable" aria-expanded="${isDetailOpen}"
+                                aria-controls="commentDetail_${c.id}" title="${isDetailOpen ? 'Hide details' : 'Show details'}"
+                                onclick="toggleCommentDetail(${jsArg(c.id)})">${escapeHtml(c.text).replace(/\n/g, '<br>')}</button>
+                        ${isDetailOpen ? renderCommentDetailInline(c) : ''}
                     </div>
                 </div>
                 <div class="comment-actions">
@@ -3715,6 +4421,49 @@ function setDashboardFilter(field, value) {
         }
 
         let isReplying_focus_id = null;
+
+        // Detalle desplegable de una tarea dentro de "Day Comments". Vive en
+        // un Set (como expandedCommentThreads) para sobrevivir a los
+        // re-renders del tiempo real mientras el modal está abierto.
+        const expandedCommentDetails = new Set();
+
+        function toggleCommentDetail(commentId) {
+            if (expandedCommentDetails.has(commentId)) expandedCommentDetails.delete(commentId);
+            else expandedCommentDetails.add(commentId);
+            if (commentsListContext.projectId && commentsListContext.dateKey) {
+                renderCommentsListContent(commentsListContext.projectId, commentsListContext.dateKey);
+            }
+        }
+
+        function renderCommentDetailInline(comment) {
+            const me = normalizeInitials(currentUser || '');
+            const assignees = getTaskAssignees(comment);
+            const totalHours = getTaskTotalHours(comment);
+            const ownerChips = assignees.length
+                ? assignees.map(u => {
+                    const h = getTaskHoursForUser(comment, u);
+                    return `<span class="day-task-chip${u === me ? ' is-me' : ''}">${escapeHtml(u)}${h > 0 ? ` · ${formatHours(h)}h` : ''}</span>`;
+                }).join('')
+                : '<span class="day-task-chip day-task-chip--none">Unassigned</span>';
+
+            return `<div class="comment-detail" id="commentDetail_${escapeHtml(comment.id)}">
+                <div class="comment-detail-grid">
+                    <div class="task-detail-label">Urgency</div>
+                    <div>${renderPriorityBadge(getUrgencyLevel(comment.urgency), getUrgencyLabel(comment.urgency))}${comment.hasIncident ? ' <span class="task-detail-incident">INCIDENT</span>' : ''}</div>
+                    <div class="task-detail-label">Responsible</div>
+                    <div class="day-task-meta">${ownerChips}</div>
+                    <div class="task-detail-label">Effort</div>
+                    <div class="task-detail-value">${totalHours > 0 ? `${formatHours(totalHours)} h total` : 'Not estimated'}</div>
+                </div>
+                <div class="task-detail-label">Description</div>
+                <div class="task-detail-value task-detail-description">${
+                    comment.description
+                        ? escapeHtml(comment.description).replace(/\n/g, '<br>')
+                        : '<span class="task-detail-empty">No description.</span>'
+                }</div>
+                <button type="button" class="comment-action-btn comment-detail-open" onclick="openTaskDetail(${jsArg(comment.id)})">Open full details ↗</button>
+            </div>`;
+        }
 
         function toggleCommentThread(commentId) {
             if (expandedCommentThreads.has(commentId)) {
@@ -4174,13 +4923,64 @@ async function loadCapacities() {
 //   - cuánto de esa carga es de ESTE proyecto, para situarla.
 // =====================================================
 
-// Fila cuyo override se está editando: { user, weekKey } o null.
+// Fila cuyo override se está editando: { user, weekKey, scope } o null.
 let capacityOverrideEditing = null;
+
+// El mismo widget se pinta en dos sitios. Cada uno navega su propia
+// semana (moverse en el dashboard no mueve la ficha) y tiene sus
+// propios ids, porque la ficha sigue en el DOM, oculta, al cambiar de
+// vista y dos inputs con el mismo id se pisarían.
+//   project   -> ficha, con el detalle "Xh here" del proyecto abierto
+//   dashboard -> al final del dashboard, con el desglose por proyectos
+let dashboardCapacityWeekStart = getMonday(new Date());
+
+const CAPACITY_WIDGET_SCOPES = {
+    project: {
+        widgetId: 'capacityWidget',
+        inputId: 'capacityOverrideInput',
+        getWeekStart: () => capacityWeekStart
+    },
+    dashboard: {
+        widgetId: 'dashboardCapacityWidget',
+        inputId: 'dashboardCapacityOverrideInput',
+        getWeekStart: () => dashboardCapacityWeekStart
+    }
+};
+
+function getCapacityScope(scope) {
+    return CAPACITY_WIDGET_SCOPES[scope] ? scope : 'project';
+}
 
 function renderCapacityWidget() {
     if (!currentProjectId) return '';
+    return buildCapacityWidgetHtml('project');
+}
 
-    const weekStart = new Date(capacityWeekStart);
+function renderDashboardCapacityWidget() {
+    return buildCapacityWidgetHtml('dashboard');
+}
+
+// "4h Claims · 2h Payroll · 1h no project": de qué proyectos sale la
+// carga de una persona. Solo para el dashboard, donde no hay "aquí".
+function describeCapacityByProject(byProject) {
+    return Object.entries(byProject || {})
+        .filter(([, hours]) => hours > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([projectId, hours]) => {
+            const project = projectId === '__none__' ? null : findAnyProject(projectId);
+            const name = project ? project.name : (projectId === '__none__' ? 'no project' : 'unknown project');
+            return `${formatHours(hours)}h ${escapeHtml(name)}`;
+        });
+}
+
+function buildCapacityWidgetHtml(scope) {
+    scope = getCapacityScope(scope);
+    const config = CAPACITY_WIDGET_SCOPES[scope];
+    const projectId = scope === 'project' ? currentProjectId : null;
+    const prevFn = scope === 'project' ? 'previousCapacityWeek()' : 'previousDashboardCapacityWeek()';
+    const nextFn = scope === 'project' ? 'nextCapacityWeek()' : 'nextDashboardCapacityWeek()';
+
+    const weekStart = new Date(config.getWeekStart());
     const weekKey = formatDateKey(weekStart);
     const capacity = computeWeekCapacity(weekKey);
 
@@ -4204,34 +5004,42 @@ function renderCapacityWidget() {
     const teamBaseline = rows.reduce((sum, e) => sum + e.baselineHours, 0);
     const teamPercent = teamBaseline > 0 ? Math.round((teamAllocated / teamBaseline) * 100) : 0;
 
-    let html = `<div class='widget-box capacity-widget' id='capacityWidget'>
+    let html = `<div class='widget-box capacity-widget${scope === 'dashboard' ? ' capacity-widget--dashboard' : ''}' id='${config.widgetId}'>
         <div class='widget-header'>
-            <div class="widget-title">Weekly Capacity</div>
+            <div class="widget-title">${scope === 'dashboard' ? 'Team Weekly Allocation' : 'Weekly Capacity'}</div>
             <span class="capacity-widget-hint" title="Hours come from the estimated effort on every task assigned to each person that week, across all projects.">all projects</span>
         </div>
 
         <div class="capacity-week-nav widget-week-nav">
-            <button type="button" class="widget-nav-btn" onclick="previousCapacityWeek()" aria-label="Previous week">◀</button>
+            <button type="button" class="widget-nav-btn" onclick="${prevFn}" aria-label="Previous week">◀</button>
             <div class="capacity-week-info">${formatWeek(weekStart)}${isCurrentWeek ? ' <span class="week-current-badge">CURRENT</span>' : ''}</div>
-            <button type="button" class="widget-nav-btn" onclick="nextCapacityWeek()" aria-label="Next week">▶</button>
+            <button type="button" class="widget-nav-btn" onclick="${nextFn}" aria-label="Next week">▶</button>
         </div>
 
         <div class="capacity-rows">`;
 
     rows.forEach(entry => {
-        const thisProjectHours = entry.byProject[currentProjectId] || 0;
+        const thisProjectHours = projectId ? (entry.byProject[projectId] || 0) : 0;
         const loadClass = capacityLoadClass(entry.percent);
         const barWidth = Math.min(100, entry.percent);
         const isEditing = capacityOverrideEditing
+            && capacityOverrideEditing.scope === scope
             && capacityOverrideEditing.user === entry.user
             && capacityOverrideEditing.weekKey === weekKey;
 
         // Detalle secundario: de qué se compone la carga.
         const details = [];
         if (thisProjectHours > 0) details.push(`${formatHours(thisProjectHours)}h here`);
+        if (!projectId && entry.overrideHours === null) details.push(...describeCapacityByProject(entry.byProject));
         if (entry.pendingHours > 0 && entry.overrideHours === null) details.push(`${formatHours(entry.pendingHours)}h pending`);
         if (entry.overrideHours !== null) details.push(`manual${entry.note ? `: ${escapeHtml(entry.note)}` : ''}`);
         if (!details.length) details.push(entry.taskCount ? 'no hours estimated' : 'nothing assigned');
+        // Por qué la base es menor que la jornada: sin decir el motivo de
+        // la ausencia (eso solo lo ve el titular en Team).
+        const offParts = [];
+        if (entry.daysOff && entry.daysOff.holidays) offParts.push(`${entry.daysOff.holidays} holiday${entry.daysOff.holidays === 1 ? '' : 's'}`);
+        if (entry.daysOff && entry.daysOff.absences) offParts.push(`${entry.daysOff.absences} day${entry.daysOff.absences === 1 ? '' : 's'} off`);
+        if (offParts.length) details.push(`<span class="capacity-days-off" title="Available hours reduced from ${formatHours(entry.fullWeekHours)}h">${offParts.join(' + ')}</span>`);
 
         html += `<div class="capacity-row${entry.overrideHours !== null ? ' is-overridden' : ''}">
             <div class="capacity-user-icon" title="${escapeHtml(entry.user)}${entry.formerMember ? ' (no longer in the team)' : ''}">${escapeHtml(entry.user)}</div>
@@ -4242,21 +5050,21 @@ function renderCapacityWidget() {
                     </div>
                     <button type="button" class="capacity-figure ${loadClass}"
                             title="Click to set a manual value for this week"
-                            onclick="startCapacityOverrideEdit(${jsArg(entry.user)})">
+                            onclick="startCapacityOverrideEdit(${jsArg(entry.user)}, '${scope}')">
                         <strong>${entry.percent}%</strong>
                         <span class="capacity-figure-hours">${formatHours(entry.effectiveHours)}/${formatHours(entry.baselineHours)}h</span>
                     </button>
                 </div>
                 <div class="capacity-row-detail">${details.join(' · ')}</div>
                 ${isEditing ? `<div class="capacity-override-form">
-                    <label class="visually-hidden" for="capacityOverrideInput">Manual hours for ${escapeHtml(entry.user)}</label>
-                    <input type="number" id="capacityOverrideInput" min="0" max="1000" step="0.5"
+                    <label class="visually-hidden" for="${config.inputId}">Manual hours for ${escapeHtml(entry.user)}</label>
+                    <input type="number" id="${config.inputId}" min="0" max="1000" step="0.5"
                            value="${entry.overrideHours !== null ? entry.overrideHours : formatHours(entry.taskHours)}"
-                           onkeydown="if(event.key==='Enter'){event.preventDefault();saveCapacityOverride(${jsArg(entry.user)});}if(event.key==='Escape'){cancelCapacityOverrideEdit();}">
+                           onkeydown="if(event.key==='Enter'){event.preventDefault();saveCapacityOverride(${jsArg(entry.user)}, '${scope}');}if(event.key==='Escape'){event.stopPropagation();cancelCapacityOverrideEdit('${scope}');}">
                     <span class="capacity-override-unit">h</span>
-                    <button type="button" class="btn btn-primary capacity-override-save" onclick="saveCapacityOverride(${jsArg(entry.user)})">Save</button>
-                    ${entry.overrideHours !== null ? `<button type="button" class="comment-action-btn" onclick="clearCapacityOverride(${jsArg(entry.user)})">Use calculated</button>` : ''}
-                    <button type="button" class="comment-action-btn" onclick="cancelCapacityOverrideEdit()">Cancel</button>
+                    <button type="button" class="btn btn-primary capacity-override-save" onclick="saveCapacityOverride(${jsArg(entry.user)}, '${scope}')">Save</button>
+                    ${entry.overrideHours !== null ? `<button type="button" class="comment-action-btn" onclick="clearCapacityOverride(${jsArg(entry.user)}, '${scope}')">Use calculated</button>` : ''}
+                    <button type="button" class="comment-action-btn" onclick="cancelCapacityOverrideEdit('${scope}')">Cancel</button>
                 </div>` : ''}
             </div>
         </div>`;
@@ -4272,66 +5080,38 @@ function renderCapacityWidget() {
     return html;
 }
 
-// =====================================================
-// ===== UNIDAD DE LECTURA (% u HORAS) POR CELDA =======
-// En la tabla del dashboard cada celda recuerda si se lee en % o en
-// horas. Es por (persona, columna) y no global porque en el equipo
-// cada uno lo mira de una manera, y cambiarlo para ti no debe
-// cambiárselo a los demás. Se guarda en localStorage del navegador:
-// es una preferencia de lectura, no un dato del proyecto.
-// =====================================================
-
-const CAPACITY_UNITS_STORAGE_KEY = 'pt_capacity_units_v1';
-let capacityUnits = (() => {
-    try {
-        const raw = localStorage.getItem(CAPACITY_UNITS_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    } catch {
-        return {};
-    }
-})();
-
-function capacityUnitKey(user, column) {
-    return `${normalizeInitials(user)}:${column}`;
-}
-
-function getCapacityUnit(user, column) {
-    return capacityUnits[capacityUnitKey(user, column)] === 'hours' ? 'hours' : 'percent';
-}
-
-function toggleCapacityUnit(user, column) {
-    const key = capacityUnitKey(user, column);
-    capacityUnits[key] = getCapacityUnit(user, column) === 'hours' ? 'percent' : 'hours';
-    try {
-        localStorage.setItem(CAPACITY_UNITS_STORAGE_KEY, JSON.stringify(capacityUnits));
-    } catch {
-        // Si el navegador bloquea storage, la preferencia solo dura la sesión.
-    }
-    renderDashboard();
-}
-
-function startCapacityOverrideEdit(user) {
-    const weekKey = formatDateKey(capacityWeekStart);
-    capacityOverrideEditing = { user: normalizeInitials(user), weekKey };
+// Repinta las dos copias del widget: un override cambia los números de
+// ambas, y la oculta debe estar al día cuando se vuelva a ella.
+function renderAllCapacityWidgetsInPlace() {
     renderCapacityWidgetInPlace();
-    const input = document.getElementById('capacityOverrideInput');
+    renderDashboardCapacityWidgetInPlace();
+}
+
+function startCapacityOverrideEdit(user, scope = 'project') {
+    scope = getCapacityScope(scope);
+    const config = CAPACITY_WIDGET_SCOPES[scope];
+    const weekKey = formatDateKey(config.getWeekStart());
+    capacityOverrideEditing = { user: normalizeInitials(user), weekKey, scope };
+    renderAllCapacityWidgetsInPlace();
+    const input = document.getElementById(config.inputId);
     if (input) { input.focus(); input.select(); }
 }
 
 function cancelCapacityOverrideEdit() {
     capacityOverrideEditing = null;
-    renderCapacityWidgetInPlace();
+    renderAllCapacityWidgetsInPlace();
 }
 
 // El override se guarda en HORAS (ver migración): es la unidad real
 // del modelo, y el % depende de la jornada de cada persona.
-async function saveCapacityOverride(user) {
-    const input = document.getElementById('capacityOverrideInput');
+async function saveCapacityOverride(user, scope = 'project') {
+    scope = getCapacityScope(scope);
+    const config = CAPACITY_WIDGET_SCOPES[scope];
+    const input = document.getElementById(config.inputId);
     if (!input) return;
 
     const initials = normalizeInitials(user);
-    const weekKey = formatDateKey(capacityWeekStart);
+    const weekKey = formatDateKey(config.getWeekStart());
     let hours = Number(input.value);
     if (!Number.isFinite(hours) || hours < 0) hours = 0;
     hours = Math.min(hours, 1000);
@@ -4366,15 +5146,14 @@ async function saveCapacityOverride(user) {
     }
 
     capacityOverrideEditing = null;
-    renderCapacityWidgetInPlace();
-    // El dashboard muestra los mismos números: hay que repintarlo.
-    if (currentView === 'dashboard') renderDashboard();
+    renderAllCapacityWidgetsInPlace();
     showToast('Manual capacity saved', 'success', { key: 'autosave', duration: 1500 });
 }
 
-async function clearCapacityOverride(user) {
+async function clearCapacityOverride(user, scope = 'project') {
+    scope = getCapacityScope(scope);
     const initials = normalizeInitials(user);
-    const weekKey = formatDateKey(capacityWeekStart);
+    const weekKey = formatDateKey(CAPACITY_WIDGET_SCOPES[scope].getWeekStart());
 
     const { error } = await supabaseClient
         .from(CAPACITY_OVERRIDES_TABLE)
@@ -4393,8 +5172,7 @@ async function clearCapacityOverride(user) {
     );
 
     capacityOverrideEditing = null;
-    renderCapacityWidgetInPlace();
-    if (currentView === 'dashboard') renderDashboard();
+    renderAllCapacityWidgetsInPlace();
     showToast('Back to the calculated value', 'success', { key: 'autosave', duration: 1500 });
 }
 
@@ -4406,6 +5184,20 @@ async function clearCapacityOverride(user) {
         function nextCapacityWeek() {
             capacityWeekStart.setDate(capacityWeekStart.getDate() + 7);
             renderCapacityWidgetInPlace();
+        }
+
+        function previousDashboardCapacityWeek() {
+            dashboardCapacityWeekStart.setDate(dashboardCapacityWeekStart.getDate() - 7);
+            renderDashboardCapacityWidgetInPlace();
+        }
+
+        function nextDashboardCapacityWeek() {
+            dashboardCapacityWeekStart.setDate(dashboardCapacityWeekStart.getDate() + 7);
+            renderDashboardCapacityWidgetInPlace();
+        }
+
+        function renderDashboardCapacityWidgetInPlace() {
+            replaceWidgetInPlace('dashboardCapacityWidget', renderDashboardCapacityWidget());
         }
 
         function replaceWidgetInPlace(id, html) {
@@ -5715,7 +6507,7 @@ function renderDashboard() {
         <div class="dash-filter-row">
             <div class="dash-filter-group">
                 <span class="dash-filter-label">Project</span>
-                <input type="text" id="dashFilterProyecto" class="dash-filter-input" placeholder="Search..." aria-label="Search project" value="${escapeHtml(dashboardFilters.proyecto || '')}">
+                <input type="text" id="dashFilterProyecto" class="dash-filter-input" placeholder="Search projects…" title="Name, description, owner, country or phase" aria-label="Search projects by name, description, owner, country or phase" value="${escapeHtml(dashboardFilters.proyecto || '')}">
             </div>
 
             <div class="dash-filter-dropdown">
@@ -5807,11 +6599,7 @@ function renderDashboard() {
 
     // Aplicar filtros
     const filteredProjects = projects.filter(p => {
-        if (dashboardFilters.proyecto) {
-            const txt = dashboardFilters.proyecto.toLowerCase();
-            const name = (p.name || '').toLowerCase();
-            if (!name.includes(txt)) return false;
-        }
+        if (dashboardFilters.proyecto && !projectMatchesQuery(p, dashboardFilters.proyecto)) return false;
 
         if (dashboardFilters.fases && dashboardFilters.fases.length > 0) {
             if (!dashboardFilters.fases.includes(p.phase)) return false;
@@ -5966,91 +6754,12 @@ function renderDashboard() {
         </div>
     </div>`;
 
-    // Widget de dedicación del equipo. Las dos semanas salen del mismo
-    // computeWeekCapacity() que el widget de la ficha, así que los
-    // números coinciden siempre.
-    const week1Start = new Date(capacityWeekStart);
-    const week2Start = new Date(capacityWeekStart);
-    week2Start.setDate(week2Start.getDate() + 7);
-
-    const week1Key = formatDateKey(week1Start);
-    const week2Key = formatDateKey(week2Start);
-
-    const cap1 = computeWeekCapacity(week1Key);
-    const cap2 = computeWeekCapacity(week2Key);
-
-    const capRows = teamMembers
-        .map(u => ({ user: u, current: cap1[u], next: cap2[u] }))
-        .filter(r => r.current && r.next);
-
-    // Celda de capacidad. Es un botón: pulsarla cambia la unidad de esa
-    // celda (% <-> horas) sin tocar las de los demás, porque cada
-    // persona del equipo prefiere leerlo de una manera.
-    const capacityCell = (user, column, entry) => {
-        const unit = getCapacityUnit(user, column);
-        const loadClass = capacityLoadClass(entry.percent);
-        const value = unit === 'hours'
-            ? `${formatHours(entry.effectiveHours)}<span class="cap-unit">/${formatHours(entry.baselineHours)}h</span>`
-            : `${entry.percent}<span class="cap-unit">%</span>`;
-        const other = unit === 'hours' ? `${entry.percent}%` : `${formatHours(entry.effectiveHours)}/${formatHours(entry.baselineHours)}h`;
-        return `<td class="cap-percent dash-num-center">
-            <button type="button" class="cap-toggle ${loadClass}"
-                    title="${other} — click to switch to ${unit === 'hours' ? 'percent' : 'hours'}"
-                    aria-label="${entry.user} ${column} load: ${other}. Click to switch units."
-                    onclick="toggleCapacityUnit(${jsArg(user)}, ${jsArg(column)})">
-                ${value}${entry.overrideHours !== null ? '<span class="cap-manual" title="Manual value">M</span>' : ''}
-            </button>
-        </td>`;
-    };
-
-    const sumCurrent = capRows.reduce((s, r) => s + r.current.effectiveHours, 0);
-    const sumNext = capRows.reduce((s, r) => s + r.next.effectiveHours, 0);
-    const sumBase = capRows.reduce((s, r) => s + r.current.baselineHours, 0);
-    const sumBaseNext = capRows.reduce((s, r) => s + r.next.baselineHours, 0);
-    const pctCurrent = sumBase > 0 ? Math.round((sumCurrent / sumBase) * 100) : 0;
-    const pctNext = sumBaseNext > 0 ? Math.round((sumNext / sumBaseNext) * 100) : 0;
-
+    // Widget de dedicación del equipo: el MISMO widget "Weekly Capacity"
+    // de la ficha (mismo computeWeekCapacity()), con su propia semana y
+    // el desglose por proyectos en vez de "Xh here".
     html += `
     <div class="dashboard-capacity-section">
-        <div class="capacity-card">
-            <h3 class="capacity-title">Team Weekly Allocation</h3>
-            <p class="capacity-subtitle">Estimated hours on every task assigned that week, across all projects. Click any figure to switch between % and hours. Over 100% means overload.</p>
-            <table class="capacity-table">
-                <thead>
-                    <tr>
-                        <th>User</th>
-                        <th class="dash-num-center">Current<span class="cap-th-week">${formatDateKey(week1Start).slice(5).replace('-', '/')}</span></th>
-                        <th class="dash-num-center">Next<span class="cap-th-week">${formatDateKey(week2Start).slice(5).replace('-', '/')}</span></th>
-                    </tr>
-                </thead>
-                <tbody>`;
-
-    capRows.forEach(row => {
-        html += `
-                    <tr>
-                        <td class="cap-user"><div class="user-avatar">${escapeHtml(row.user)}</div></td>
-                        ${capacityCell(row.user, 'current', row.current)}
-                        ${capacityCell(row.user, 'next', row.next)}
-                    </tr>`;
-    });
-
-    html += `
-                </tbody>
-                <tfoot>
-                    <tr class="cap-total-row">
-                        <td class="cap-user"><span class="cap-total-label">Team</span></td>
-                        <td class="cap-percent dash-num-center ${capacityLoadClass(pctCurrent)}">
-                            <strong>${formatHours(sumCurrent)}/${formatHours(sumBase)}h</strong>
-                            <span class="cap-total-pct">${pctCurrent}%</span>
-                        </td>
-                        <td class="cap-percent dash-num-center ${capacityLoadClass(pctNext)}">
-                            <strong>${formatHours(sumNext)}/${formatHours(sumBaseNext)}h</strong>
-                            <span class="cap-total-pct">${pctNext}%</span>
-                        </td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
+        ${renderDashboardCapacityWidget()}
     </div>`;
 
     container.innerHTML = html;
@@ -6337,7 +7046,8 @@ function sortDailyProjects(projects) {
             daily: 'Daily',
             ficha: 'Project Card',
             equipo: 'Team Calendar',
-            dashboard: 'Projects Dashboard'
+            dashboard: 'Projects Dashboard',
+            tasks: 'My Tasks'
         };
 
         function switchView(view) {
@@ -6388,6 +7098,8 @@ function sortDailyProjects(projects) {
             else if (currentView === 'ficha') renderFicha();
             else if (currentView === 'equipo') renderTeamView();
             else if (currentView === 'dashboard') renderDashboard();
+            else if (currentView === 'tasks') renderTasksView();
+            updateTasksViewCount();
         }
 
 
@@ -6581,7 +7293,9 @@ function sortDailyProjects(projects) {
             realtimeInFlight = true;
             realtimeRefreshPending = false;
             try {
-                await loadDataFromSupabase(true);
+                // Las ausencias van aparte: loadDataFromSupabase no las lee
+                // (y su destructuring posicional no admite colarlas ahí).
+                await Promise.all([loadDataFromSupabase(true), loadTeamVacations()]);
                 renderActiveView();
                 refreshOpenOverlays();
             } finally {
@@ -6597,7 +7311,7 @@ function sortDailyProjects(projects) {
             }, 50);
         });
 
-        ['projects', 'daily_comments', 'project_notes', 'project_weekly_tasks', 'project_incidents', DAY_PERSONAL_TASKS_TABLE, DAY_TASKS_TABLE, CAPACITY_OVERRIDES_TABLE, APP_USERS_TABLE]
+        ['projects', 'daily_comments', 'project_notes', 'project_weekly_tasks', 'project_incidents', 'team_vacations', DAY_PERSONAL_TASKS_TABLE, DAY_TASKS_TABLE, CAPACITY_OVERRIDES_TABLE, APP_USERS_TABLE]
             .forEach(table => {
                 supabaseClient
                     .channel(`${table}-changes`)
@@ -6646,9 +7360,12 @@ function sortDailyProjects(projects) {
             const container = document.getElementById('teamView');
 
             const year = currentMonth.getFullYear();
-            const holidaysLoaded = Object.hasOwn(HOLIDAYS_BY_COUNTRY.ES || {}, year);
-            const holidayCalendarStatus = (teamViewMode === 'year' && !holidaysLoaded)
-                ? `<div class="holiday-calendar-status holiday-calendar-status--pending" role="status">Official ${year} public holidays pending validation.</div>`
+            // Aviso por región: "Alicante, Mumbai" en vez de un genérico,
+            // para que se sepa qué calendario falta por cargar.
+            const visibleYear = teamViewMode === 'year' ? year : teamRefDate.getFullYear();
+            const pendingRegions = getPendingHolidayRegions(visibleYear).map(r => HOLIDAY_REGION_LABEL[r] || r);
+            const holidayCalendarStatus = pendingRegions.length
+                ? `<div class="holiday-calendar-status holiday-calendar-status--pending" role="status">${visibleYear} public holidays still incomplete for ${escapeHtml(pendingRegions.join(', '))}: local holidays not published yet.</div>`
                 : '';
 
             // Navigation label depends on the active view mode.
@@ -6691,7 +7408,9 @@ function sortDailyProjects(projects) {
         <ul class="calendar-legend" aria-label="Calendar legend">
             <li class="legend-filterable${vacationLegendFilter === 'current_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('current_year')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight current year only"><span class="legend-swatch legend-swatch--current"></span>Current year</li>
             <li class="legend-filterable${vacationLegendFilter === 'previous_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('previous_year')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight previous year only"><span class="legend-swatch legend-swatch--previous"></span>Previous year</li>
+            <li class="legend-filterable${vacationLegendFilter === 'next_year' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('next_year')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight next year only"><span class="legend-swatch legend-swatch--next"></span>Next year</li>
             <li class="legend-filterable${vacationLegendFilter === 'willis_choice' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('willis_choice')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight WTW Choice only"><span class="legend-swatch legend-swatch--willis"></span>WTW Choice</li>
+            <li class="legend-filterable${vacationLegendFilter === 'absence' ? ' legend-active' : ''}" tabindex="0" role="button" onclick="toggleVacationLegendFilter('absence')" onkeydown="activateOnEnterOrSpace(event)" title="Highlight absences that do not use the leave balance"><span class="legend-swatch legend-swatch--absence"></span>Absence (not charged)</li>
             <li><span class="legend-swatch legend-swatch--selected"></span>Selected</li>
             <li><span class="legend-swatch legend-swatch--holiday"></span>Public holiday</li>
             <li><span class="legend-swatch legend-swatch--weekend"></span>Weekend</li>
@@ -6720,7 +7439,8 @@ function sortDailyProjects(projects) {
             const todayKey = formatDateKey(new Date());
             const dayOfWeek = date.getDay();
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-            const isHoliday = isHolidayForMember(member, dateKey);
+            const holidayName = getHolidayName(getMemberRegion(member), dateKey);
+            const isHoliday = !!holidayName;
 
             const vacation = teamVacations.find(v =>
                 v.user_initials === member && dateKey >= v.start_date && dateKey <= v.end_date
@@ -6733,14 +7453,17 @@ function sortDailyProjects(projects) {
             if (isSelected) cellClass += ' vacation-selected';
             if (dateKey === todayKey) cellClass += ' today-cell';
             if (vacation) {
-                if (vacation.vacation_type === 'current_year') cellClass += ' vacation-current-year';
+                const legendKey = isVacationAbsence(vacation) ? vacation.vacation_type : 'absence';
+                if (legendKey === 'absence') cellClass += ' absence-other';
+                else if (vacation.vacation_type === 'current_year') cellClass += ' vacation-current-year';
                 else if (vacation.vacation_type === 'previous_year') cellClass += ' vacation-previous-year';
+                else if (vacation.vacation_type === 'next_year') cellClass += ' vacation-next-year';
                 else if (vacation.vacation_type === 'willis_choice') cellClass += ' vacation-willis-choice';
-                if (vacationLegendFilter && vacation.vacation_type !== vacationLegendFilter) cellClass += ' legend-dim';
+                if (vacationLegendFilter && legendKey !== vacationLegendFilter) cellClass += ' legend-dim';
             }
 
-            const tooltip = `${member} · ${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}${isHoliday ? ' · Public holiday' : ''}${vacation ? ' · Leave' : ''}`;
-            return `<td class="${cellClass.trim()}" onclick="toggleVacation('${member}', '${dateKey}', event)" title="${tooltip}"></td>`;
+            const tooltip = `${member} · ${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}${isHoliday ? ` · Public holiday: ${holidayName}` : ''}${vacation ? ` · ${describeAbsenceFor(vacation, currentUser)}` : ''}`;
+            return `<td class="${cellClass.trim()}" onclick="toggleVacation('${member}', '${dateKey}', event)" title="${escapeHtml(tooltip)}"></td>`;
         }
 
         // YEAR view: two stacked semesters (original layout).
@@ -6879,6 +7602,7 @@ function sortDailyProjects(projects) {
             const availableYears = [...new Set([
                 currentYear,
                 currentYear - 1,
+                currentYear + 1,
                 currentMonth.getFullYear(),
                 ...teamVacations.map(getVacationAccrualYear).filter(Number.isInteger)
             ])].sort((a, b) => b - a);
@@ -6886,31 +7610,41 @@ function sortDailyProjects(projects) {
                 vacationBalanceYear = currentYear;
             }
 
-            // Calcular totales por usuario
+            // Calcular totales por usuario. Solo las vacaciones restan saldo;
+            // bajas y asuntos personales van aparte y por año natural.
+            const sumDays = list => list.reduce((sum, v) => sum + (Number(v.days_count) || 0), 0);
             const summary = teamMembers.map(member => {
-                const vacationDays = teamVacations
-                    .filter(v =>
-                        v.user_initials === member &&
-                        v.vacation_type !== 'willis_choice' &&
-                        getVacationAccrualYear(v) === vacationBalanceYear
-                    )
-                    .reduce((sum, v) => sum + (Number(v.days_count) || 0), 0);
+                const own = teamVacations.filter(v => v.user_initials === member);
+                const charged = own.filter(v => isVacationAbsence(v) && getVacationAccrualYear(v) === vacationBalanceYear);
+                const vacationDays = sumDays(charged.filter(v => v.vacation_type !== 'willis_choice'));
+                const willisChoiceDays = sumDays(charged.filter(v => v.vacation_type === 'willis_choice'));
 
-                const willisChoiceDays = teamVacations
-                    .filter(v =>
-                        v.user_initials === member &&
-                        v.vacation_type === 'willis_choice' &&
-                        getVacationAccrualYear(v) === vacationBalanceYear
-                    )
-                    .reduce((sum, v) => sum + (Number(v.days_count) || 0), 0);
+                const otherAbsences = own.filter(v =>
+                    !isVacationAbsence(v) && Number(String(v.start_date || '').slice(0, 4)) === vacationBalanceYear);
+                const otherByType = {};
+                otherAbsences.forEach(v => {
+                    const type = getAbsenceType(v);
+                    otherByType[type] = (otherByType[type] || 0) + (Number(v.days_count) || 0);
+                });
 
                 return {
                     member,
                     vacationDays,
                     willisChoiceDays,
+                    otherDays: sumDays(otherAbsences),
+                    otherByType,
                     total: vacationDays + willisChoiceDays
                 };
             });
+
+            // El desglose por motivo solo para el titular; el resto ve el total.
+            const describeOtherAbsences = s => {
+                if (!s.otherDays) return '';
+                if (s.member !== normalizeInitials(currentUser || '')) return `${s.otherDays} absent`;
+                return Object.entries(s.otherByType)
+                    .map(([type, days]) => `${days} ${ABSENCE_TYPES[type].toLowerCase()}`)
+                    .join(' · ');
+            };
 
             return `
         <div class="vacation-summary">
@@ -6937,10 +7671,11 @@ function sortDailyProjects(projects) {
                         </div>
                         <div class="vacation-balance-figure u-figure">${s.vacationDays.toFixed(1)}<span class="vacation-balance-max">/${STANDARD_VACATION_DAYS_PER_YEAR}</span></div>
                         ${s.willisChoiceDays ? `<div class="vacation-balance-willis">+${s.willisChoiceDays.toFixed(1)} WTW</div>` : ''}
+                        ${s.otherDays ? `<div class="vacation-balance-other" title="Not charged to the leave balance">${escapeHtml(describeOtherAbsences(s))}</div>` : ''}
                     </div>`;
                 }).join('')}
             </div>
-            <p class="chart-footnote">Balance bar against ${STANDARD_VACATION_DAYS_PER_YEAR} reference days/year (adjustable). WTW Choice is shown separately, with no fixed cap.</p>
+            <p class="chart-footnote">Balance bar against ${STANDARD_VACATION_DAYS_PER_YEAR} reference days/year (adjustable). WTW Choice is shown separately, with no fixed cap. Sick leave and personal matters never use the balance.</p>
 
             ${buildVacationMonthDistributionHtml(vacationBalanceYear)}
         </div>
@@ -7167,17 +7902,36 @@ function sortDailyProjects(projects) {
             const datesToAdd = [...new Set(dateKeysArray.length > 0 ? dateKeysArray : [startDateKey])].filter(Boolean);
             const modal = document.getElementById('vacationOptionsModal');
             const typeSelect = document.getElementById('vacationTypeSelect');
+            const absenceSelect = document.getElementById('absenceTypeSelect');
             const selectionLabel = document.getElementById('vacationSelectionLabel');
-            if (!modal || !typeSelect || !selectionLabel || datesToAdd.length === 0) return;
+            if (!modal || !typeSelect || !absenceSelect || !selectionLabel || datesToAdd.length === 0) return;
 
             pendingVacationSelection = { member, dates: datesToAdd };
+            absenceSelect.innerHTML = Object.entries(ABSENCE_TYPES)
+                .map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
             typeSelect.innerHTML = `
                 <option value="current_year">Current year (${currentYear})</option>
                 <option value="previous_year">Previous year (${previousYear})</option>
+                <option value="next_year">Next year (${currentYear + 1})</option>
                 <option value="willis_choice">WTW Choice (${currentYear})</option>
             `;
             selectionLabel.textContent = `${datesToAdd.length} ${datesToAdd.length === 1 ? 'full day' : 'full days'}`;
-            openModal('vacationOptionsModal', '#vacationTypeSelect');
+            onAbsenceTypeChange();
+            openModal('vacationOptionsModal', '#absenceTypeSelect');
+        }
+
+        // Solo las vacaciones cargan saldo: para el resto se oculta el selector.
+        function onAbsenceTypeChange() {
+            const absenceSelect = document.getElementById('absenceTypeSelect');
+            const group = document.getElementById('vacationTypeGroup');
+            const hint = document.getElementById('absenceTypeHint');
+            const isVacation = !absenceSelect || absenceSelect.value === 'vacation';
+            if (group) group.hidden = !isVacation;
+            if (hint) {
+                hint.textContent = isVacation
+                    ? 'Uses your leave balance.'
+                    : 'Does not use your leave balance. Only you see the reason; the team sees “Absent”.';
+            }
         }
 
         function closeVacationOptionsModal() {
@@ -7188,18 +7942,24 @@ function sortDailyProjects(projects) {
         async function saveVacationSelection() {
             if (!pendingVacationSelection) return;
 
+            const absenceSelect = document.getElementById('absenceTypeSelect');
+            const absenceType = absenceSelect ? absenceSelect.value : 'vacation';
+            if (!ABSENCE_TYPES[absenceType]) return;
+
             const typeSelect = document.getElementById('vacationTypeSelect');
-            const vacationType = typeSelect && typeSelect.value;
-            if (!['current_year', 'previous_year', 'willis_choice'].includes(vacationType)) return;
+            const vacationType = absenceType === 'vacation' ? (typeSelect && typeSelect.value) : 'not_charged';
+            if (absenceType === 'vacation' && !CHARGED_VACATION_TYPES.includes(vacationType)) return;
 
             const currentYear = new Date().getFullYear();
-            const vacationYear = vacationType === 'previous_year' ? currentYear - 1 : currentYear;
+            const vacationYear = vacationType === 'previous_year' ? currentYear - 1
+                : vacationType === 'next_year' ? currentYear + 1
+                : currentYear;
             const selection = pendingVacationSelection;
             closeVacationOptionsModal();
-            await addVacationWithDateRange(selection.member, selection.dates, vacationType, vacationYear);
+            await addVacationWithDateRange(selection.member, selection.dates, vacationType, vacationYear, absenceType);
         }
 
-        async function addVacationWithDateRange(member, dateKeysArray, vacationType, vacationYear) {
+        async function addVacationWithDateRange(member, dateKeysArray, vacationType, vacationYear, absenceType = 'vacation') {
             if (!dateKeysArray || dateKeysArray.length === 0) return;
 
             // Weekends and public holidays are non-working days, so they never
@@ -7231,6 +7991,7 @@ function sortDailyProjects(projects) {
                 status: 'planned',
                 vacation_type: vacationType,
                 vacation_year: vacationYear,
+                absence_type: absenceType,
                 days_count: 1
             }));
 
@@ -7247,7 +8008,8 @@ function sortDailyProjects(projects) {
             selectedVacationDays = [];
             await loadTeamVacations();
             renderTeamView();
-            showToast(`${vacationRecords.length} leave day${vacationRecords.length === 1 ? '' : 's'} added`, 'success');
+            const label = absenceType === 'vacation' ? 'leave' : ABSENCE_TYPES[absenceType].toLowerCase();
+            showToast(`${vacationRecords.length} ${label} day${vacationRecords.length === 1 ? '' : 's'} added`, 'success');
         }
 
         async function deleteVacation(vacationId) {
@@ -7625,6 +8387,19 @@ function sortDailyProjects(projects) {
         window.addEventListener('load', setupLoginScreen);
         window.addEventListener('load', initTheme);
         window.addEventListener('keydown', event => {
+            // "/" o Ctrl+K: ir al buscador de proyectos (no si se está escribiendo o hay un modal)
+            const wantsSearch = (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey)
+                || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k');
+            if (wantsSearch && appInitialized && !document.querySelector('.modal.active')) {
+                const el = document.activeElement;
+                const typing = el && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable ||
+                    (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit'].includes(el.type)));
+                if (!typing || event.key.toLowerCase() === 'k') {
+                    event.preventDefault();
+                    focusSidebarSearch();
+                    return;
+                }
+            }
             if (event.key !== 'Escape') return;
             if (closeTopModal()) return;
             if (document.querySelector('.resp-popover')) { closeResponsiblesPopover(); return; }
